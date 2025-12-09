@@ -1,0 +1,25 @@
+# Start cluster
+docker compose up -d
+
+# Verify running brokers
+docker ps
+
+# Check API versions
+docker exec -it broker1 kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+
+# Check metadata quorum
+docker exec -it broker1 kafka-metadata-quorum.sh --bootstrap-server localhost:9092 describe
+
+# Create new topic
+docker exec -it broker1 kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --topic demo-topic --partitions 3 --replication-factor 3
+
+# Describe topic placement
+docker exec -it broker1 kafka-topics.sh --bootstrap-server localhost:9092 \
+  --describe --topic demo-topic
+
+# Check system load
+docker stats
+
+# Simulate load
+docker exec -it broker1 sh -c "yes > /dev/null"
