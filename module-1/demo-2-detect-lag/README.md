@@ -1,287 +1,269 @@
+ 
 
+# Demo 2: Detect Lag and ISR Changes
 
-# Demo 1 – Inspect Kafka Brokers and Replication
+This demo shows how Kafka behaves when a broker becomes slow or unresponsive.
+You will observe:
 
-Author: **Rupesh Kumar Tiwari**
+* **ISR drift** when a replica falls behind
+* **Lag spikes** under heavy workload
+* **Producer slowdown** due to reduced replication safety
+* **Cluster recovery** when the broker returns
 
-This demo runs a three broker Apache Kafka cluster on Docker and walks through the basic checks I perform as an operator:
-
-* Start a small multi broker cluster
-* Create a replicated topic
-* Inspect leaders, replicas and ISR
-* Simulate a broker failure and recovery
-
-Everything here is fully reproducible on a laptop.
-
----
-
-## 1. Prerequisites
-
-Make sure you have:
-
-* Docker Desktop installed and running
-* Docker CLI available in your terminal
-* Docker Compose v2 (`docker compose`)
-
-I run this from the course repo in:
-
-```text
-src/module-1/demo-1-inspect-brokers
-```
+We use four terminals with live monitors to make these effects easy to see.
 
 ---
 
-## 2. Folder Layout
+## **Terminal Layout**
 
-This folder contains:
+Open 4 terminals and name them:
 
-```text
-demo-1-inspect-brokers/
-  ├── docker-compose.yml
-  ├── notes.md
-  ├── commands.txt
-  └── screenshots/
-```
+| Terminal | Role                          |
+| -------- | ----------------------------- |
+| **T1**   | Cluster Control & ISR Monitor |
+| **T2**   | Broker1 Shell & Consumer      |
+| **T3**   | Lag Monitor                   |
+| **T4**   | Producer Load                 |
 
-The main file is `docker-compose.yml`.
-
----
-
-## 3. Docker Compose Configuration
-
-The `docker-compose.yml` defines:
-
-* One ZooKeeper container
-* Three Kafka brokers: `broker1`, `broker2`, `broker3`
-
-Key details:
-
-* All brokers connect to ZooKeeper at `zookeeper:2181`
-* Each broker exposes its own host port
-
-  * `broker1` – 9092
-  * `broker2` – 9093
-  * `broker3` – 9094
-* Default replication factor is 3
-* `min.insync.replicas` is 2
-
-This creates a realistic cluster with three replicas per partition.
-
----
-
-## 4. Start the Cluster
-
-From the demo folder:
+All host terminals (T1, T3, T4):
 
 ```bash
-cd src/module-1/demo-1-inspect-brokers
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+```
+
+You already have `lag-monitor.sh` and `isr-monitor.sh` in this folder.
+
+---
+
+## **STEP 1 — Hard Reset the Cluster (T1)**
+
+```bash
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+
+docker stop broker1 broker2 broker3 zookeeper 2>/dev/null
+docker rm   broker1 broker2 broker3 zookeeper 2>/dev/null
+docker compose down 2>/dev/null
+
 docker compose up -d
-```
-
-Verify all containers are running:
-
-```bash
 docker ps
-```
-
-Expected output:
-
-```text
-CONTAINER ID   IMAGE                             NAMES
-a6c63a34465a   confluentinc/cp-kafka:7.5.0       broker2
-d44dc1bc3ae4   confluentinc/cp-kafka:7.5.0       broker1
-3fe7ba3eee8c   confluentinc/cp-kafka:7.5.0       broker3
-21886cbe3321   confluentinc/cp-zookeeper:7.5.0   zookeeper
-```
-
-If a container is not up, check logs:
-
-```bash
-docker logs broker1 | head -50
-docker logs zookeeper | head -50
-```
-
----
-
-## 5. Open a Shell Inside Broker 1
-
-Run all Kafka CLI commands inside `broker1`:
-
-```bash
-docker exec -it broker1 bash
-```
-
-Prompt should look like:
-
-```text
-[appuser@<container-id> ~]$
-```
-
----
-
-## 6. Create a Replicated Topic
-
-Create a topic `demo-topic` with three partitions and replication factor three:
-
-```bash
-kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --create \
-  --topic demo-topic \
-  --partitions 3 \
-  --replication-factor 3
 ```
 
 Expected:
 
-```text
-Created topic demo-topic.
-```
+* `broker1`, `broker2`, `broker3`, `zookeeper` → all **Up**
 
-If it already exists:
+If broker1 is not running:
 
 ```bash
-kafka-topics --bootstrap-server broker1:9092 --delete --topic demo-topic
+docker start broker1
 ```
-
-Then recreate it.
 
 ---
 
-## 7. Inspect the Healthy Topic Layout
-
-Describe the topic:
+## **STEP 2 — Open Broker1 Shell (T2)**
 
 ```bash
-kafka-topics \
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+docker exec -it broker1 bash
+```
+
+Stay inside the container.
+
+---
+
+## **STEP 3 — Delete & Recreate the Topic (T2)**
+
+Inside broker1:
+
+```bash
+kafka-topics --bootstrap-server broker1:9092 --delete --topic lag-demo-topic
+```
+
+Ignore errors.
+
+Create fresh topic:
+
+```bash
+kafka-topics --bootstrap-server broker1:9092 \
+  --create --topic lag-demo-topic \
+  --partitions 3 --replication-factor 3
+```
+
+Verify:
+
+```bash
+kafka-topics --bootstrap-server broker1:9092 \
+  --describe --topic lag-demo-topic
+```
+
+Expected:
+
+* **Replicas:** 3 brokers
+* **ISR:** 3 brokers (green in your monitor)
+
+---
+
+## **STEP 4 — Start Consumer Group (T2)**
+
+Inside broker1:
+
+```bash
+kafka-console-consumer \
   --bootstrap-server broker1:9092 \
-  --describe \
-  --topic demo-topic
+  --topic lag-demo-topic \
+  --group lag-demo-group \
+  --from-beginning
 ```
 
-Example:
-
-```text
-Topic: demo-topic  PartitionCount: 3  ReplicationFactor: 3  Configs: min.insync.replicas=2
-  Partition: 0  Leader: 1  Replicas: 1,2,3  Isr: 1,2,3
-  Partition: 1  Leader: 2  Replicas: 2,3,1  Isr: 2,3,1
-  Partition: 2  Leader: 3  Replicas: 3,1,2  Isr: 3,1,2
-```
-
-What I check:
-
-* Replication factor is 3
-* Leaders are distributed across brokers
-* All partitions have full ISR (1,2,3)
-
-This represents a healthy cluster.
+Leave running. This creates the consumer group.
 
 ---
 
-## 8. Simulate a Broker Failure
-
-Keep the broker shell open. In a second host terminal:
+## **STEP 5 — Start Lag Monitor (T3)**
 
 ```bash
-cd src/module-1/demo-1-inspect-brokers
-docker stop broker2
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+./lag-monitor.sh
 ```
 
-Confirm:
+Expected:
 
-```bash
-docker ps
-```
+* LAG = **0** (green)
+* Table updates every 5 seconds
 
-`broker2` should be missing while the others stay up.
-
-Back in the `broker1` shell:
-
-```bash
-kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --describe \
-  --topic demo-topic
-```
-
-Output should show a reduced ISR:
-
-```text
-Partition: 0  Leader: 3  Replicas: 3,1,2  Isr: 3,1
-Partition: 1  Leader: 1  Replicas: 1,3,2  Isr: 1,3
-Partition: 2  Leader: 3  Replicas: 3,1,2  Isr: 3,1
-```
-
-Replication factor still shows as 3, but ISR shrinks. This is expected when a broker is down.
+Leave running.
 
 ---
 
-## 9. Recover the Broker and Confirm ISR
-
-On the host:
+## **STEP 6 — Start ISR Monitor (T1)**
 
 ```bash
-docker start broker2
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+./isr-monitor.sh
 ```
 
-After a few seconds, describe the topic again:
+Expected:
 
-```bash
-kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --describe \
-  --topic demo-topic
-```
+* ISR = **three replicas** for all partitions (green)
 
-ISR should return to full strength:
-
-```text
-Isr: 1,2,3
-Isr: 2,3,1
-Isr: 3,1,2
-```
-
-Exit the container:
-
-```bash
-exit
-```
-
-Final check:
-
-```bash
-docker ps
-```
-
-All brokers and ZooKeeper should be up.
+Leave running.
 
 ---
 
-## 10. Optional Cleanup
-
-To stop and remove everything:
+## **STEP 7 — Generate Load on Healthy Cluster (T4)**
 
 ```bash
-cd src/module-1/demo-1-inspect-brokers
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-2-detect-lag
+
+docker exec -it broker1 kafka-producer-perf-test \
+  --topic lag-demo-topic \
+  --num-records 100000 \
+  --record-size 500 \
+  --throughput -1 \
+  --producer-props bootstrap.servers=broker1:9092 acks=1
+```
+
+Observe:
+
+* T2: consumer prints messages
+* T3: lag moves but settles to 0
+* T1: ISR remains all green
+
+This is your **healthy baseline**.
+
+---
+
+## **STEP 8 — Stress Broker2 & Create Real Lag**
+
+### **8A — Pause Broker2 (T1)**
+
+Stop ISR monitor (Ctrl+C), then:
+
+```bash
+docker pause broker2
+docker ps   # shows broker2 as (Paused)
+```
+
+Restart ISR monitor:
+
+```bash
+./isr-monitor.sh
+```
+
+Expected:
+
+* ISR shrinks from **3 replicas → 2 replicas**
+* All ISR rows are **red**
+
+This is the degraded replication state.
+
+---
+
+### **8B — Heavy Workload While Degraded (T4)**
+
+```bash
+docker exec -it broker1 kafka-producer-perf-test \
+  --topic lag-demo-topic \
+  --num-records 2000000 \
+  --record-size 500 \
+  --throughput -1 \
+  --producer-props bootstrap.servers=broker1:9092 acks=1
+```
+
+Observe:
+
+* **T3:** lag spikes (yellow → red)
+* **T2:** consumer falls behind
+* **T1:** ISR stays red
+* **T4:** producer throughput drops, latency increases
+
+This demonstrates how **ISR drift creates lag under load**.
+
+---
+
+## **STEP 9 — Recovery (T1)**
+
+```bash
+docker unpause broker2
+docker ps   # broker2 Up
+```
+
+Watch:
+
+* ISR rows turn green **one partition at a time**
+* Lag falls back to **0**
+* System returns to full replication
+
+Kafka automatically heals once the slow broker catches up.
+
+---
+
+## **STEP 10 — Stop Demo (optional)**
+
+Inside broker1 (T2):
+
+```bash
+kafka-topics --bootstrap-server broker1:9092 --delete --topic lag-demo-topic
+```
+
+In T1:
+
+```bash
 docker compose down
 ```
 
 ---
 
-## 11. Summary
+# **What You Learned**
 
-In this demo you:
+* How ISR indicates replication health
+* How ISR drift occurs when brokers slow down
+* How lag reacts under degraded ISR conditions
+* How Kafka automatically heals and restores full ISR
+* How to observe replication and consumer behavior during stress
 
-1. Started a three broker Kafka cluster on Docker
-2. Created a topic with replication factor three
-3. Verified leaders, replicas and ISR
-4. Stopped a broker and observed ISR shrink
-5. Restarted the broker and confirmed full ISR recovery
-
-These checks mirror what a Kafka operator should monitor daily.
-
-For deeper help with Kafka operations or production systems, visit **[https://fullstackmaster.net](https://fullstackmaster.net)** or book a session at **[https://fullstackmaster.net/book](https://fullstackmaster.net/book)**.
+This is the foundation for operating and monitoring Kafka clusters in production.
 
 ---
-
-If you want, I can also help convert this into a video script, slides, or a GitHub friendly version.
+ 
+For deeper help with Kafka operations or production systems, visit **[https://fullstackmaster.net](https://fullstackmaster.net)** or book a session at **[https://fullstackmaster.net/book](https://fullstackmaster.net/book)**.

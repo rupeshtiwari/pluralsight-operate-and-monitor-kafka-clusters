@@ -2,5 +2,5 @@
     "auths": {},
     "credsStore": "desktop",
     "currentContext": "desktop-linux",
-    "psFormat": "table {{if eq .Names \"NAMES\"}}{{printf \"\u001b[1;35m%-15s\u001b[0m\" .Names}}{{else}}{{printf \"\u001b[36m%-15s\u001b[0m\" .Names}}{{end}}  {{if eq .Status \"STATUS\"}}{{printf \"\u001b[1;31m%-15s\u001b[0m\" .Status}}{{else}}{{if eq .State \"running\"}}{{printf \"\u001b[32m%-15s\u001b[0m\" .Status}}{{else}}{{printf \"\u001b[33m%-15s\u001b[0m\" .Status}}{{end}}{{end}}  {{if eq .Ports \"PORTS\"}}{{printf \"\u001b[1;34m%s\u001b[0m\" .Ports}}{{else}}{{printf \"\u001b[34m%s\u001b[0m\" .Ports}}{{end}}"
+    "psFormat": "table {{printf \"\u001b[1;35m%-15s\u001b[0m\" \"NAMES\"}} {{printf \"\u001b[1;31m%-20s\u001b[0m\" \"STATUS\"}} {{printf \"\u001b[1;34m%s\u001b[0m\" \"PORTS\"}}\n{{printf \"\u001b[36m%-15s\u001b[0m\" .Names}} {{if eq .State \"running\"}}{{printf \"\u001b[32m%-20s\u001b[0m\" .Status}}{{else}}{{printf \"\u001b[33m%-20s\u001b[0m\" .Status}}{{end}} {{printf \"\u001b[34m%s\u001b[0m\" .Ports}}"
 }
