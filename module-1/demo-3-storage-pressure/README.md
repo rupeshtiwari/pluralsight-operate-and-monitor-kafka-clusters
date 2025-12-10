@@ -226,8 +226,6 @@ This demonstrates how **ISR drift creates lag under load**.
 ```bash
 docker unpause broker2
 docker ps   # broker2 Up
-
-./isr-monitor.sh # run monitor
 ```
 
 Watch:
