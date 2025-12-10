@@ -1,88 +1,43 @@
+# 📘 **Demo 6 — Monitor Cluster After Scaling Actions**
 
-# 📘 **Demo 5: Tune Producer Throughput Settings**
+This demo shows how to verify Kafka cluster health **after scaling partitions**.
+You will validate ISR stability, leader rebalancing, consumer lag behavior, and producer throughput improvements.
 
-This demo teaches how to **increase Kafka producer throughput safely** by tuning the two most influential batching settings:
+This aligns with the learning objectives:
 
-* **batch.size**
-* **linger.ms**
+* Verify **lag stabilization** after a rebalance
+* Confirm **leaders are evenly distributed**
+* Observe **throughput improvements** across brokers
 
-You will learn how these settings affect **throughput**, **latency**, and **consumer lag** — and how to validate the tuning using live ISR and lag monitors.
-
-This aligns directly with the Learning Objective:
-
-> **Adjust producer configurations to balance throughput and latency while maintaining cluster stability.**
-
----
-
-## 🧩 **Concept Overview**
-
-A Kafka producer doesn’t send messages one at a time.
-It batches messages together before sending them.
-Two settings control that batching behavior:
-
-### **1. batch.size**
-
-Sets the maximum size of a batch (in bytes).
-Larger batches → higher throughput → slightly more latency.
-
-### **2. linger.ms**
-
-Adds a small wait time to allow batches to fill.
-Small linger values → very high throughput → increased latency.
-
-Senior operators always tune producers with **three safety indicators**:
-
-1. **ISR Health** → Replication stability
-2. **Lag Behavior** → Latency impact
-3. **Measured Throughput** → Actual performance gain
-
-This demo shows how to read all three correctly.
+All steps below run in a **clean two-broker cluster** using **five terminals**.
 
 ---
 
 ## 🖥 **Terminal Layout**
 
-You will use a **four-terminal layout**:
-
-| Terminal | Purpose                             |
-| -------- | ----------------------------------- |
-| **T1**   | Cluster Control + ISR Monitor       |
-| **T2**   | Consumer (broker1)                  |
-| **T3**   | Lag Monitor                         |
-| **T4**   | Producer Load Generator (perf test) |
+| Terminal | Purpose                               |
+| -------- | ------------------------------------- |
+| **T1**   | ISR Monitor                           |
+| **T2**   | Broker1 shell + topic mgmt + consumer |
+| **T3**   | Lag Monitor                           |
+| **T4**   | Producer Load                         |
+| **T5**   | Leader Monitor                        |
 
 All commands assume you're inside:
 
 ```bash
-cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-5-producer-tuning
+cd ~/pluralsight-operate-and-monitor-kafka-clusters/code/module-1/demo-6-scale-partitions
 ```
 
----
-
-## 🛠 **Scripts Provided**
-
-This demo requires two watch scripts.
-
-### **1. ISR Monitor**
-
-`isr-monitor-tuning.sh`
-Shows replica health and highlights ISR shrink.
-
-### **2. Lag Monitor**
-
-`lag-monitor-tuning.sh`
-Shows lag changes with color-coded indicators.
-
-Make both executable:
+Launch the tmux layout:
 
 ```bash
-chmod +x isr-monitor-tuning.sh
-chmod +x lag-monitor-tuning.sh
+./start-demo-6-layout.sh
 ```
 
 ---
 
-# 🚀 **STEP 1 — Start Clean Cluster (T1)**
+# 🚀 **STEP 1 — Start Clean Cluster (host)**
 
 ```bash
 docker compose down 2>/dev/null
@@ -92,188 +47,174 @@ docker ps
 
 Expected containers:
 
-* broker1
-* broker2
-* broker3
-* zookeeper
-
-All must be **Up**.
-No paused or restarting containers allowed.
+* `broker1`
+* `broker3`
+* `zookeeper`
 
 ---
 
-# 📦 **STEP 2 — Create Topic (T1)**
-
-Delete and recreate the topic to ensure a clean partition state:
+# 🐚 **STEP 2 — Open Broker1 Shell (T2)**
 
 ```bash
-docker exec broker1 kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --delete --topic throughput-demo-topic 2>/dev/null
-
-docker exec broker1 kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --create --topic throughput-demo-topic \
-  --partitions 3 --replication-factor 3
-
-docker exec broker1 kafka-topics \
-  --bootstrap-server broker1:9092 \
-  --describe --topic throughput-demo-topic
+docker exec -it broker1 bash
 ```
 
 ---
 
-# 👀 **STEP 3 — Start ISR Monitor (T1)**
+# 📦 **STEP 3 — Create Topic `scale-demo-topic-v2` (T2 inside broker1)**
 
 ```bash
-./isr-monitor-tuning.sh
+kafka-topics --bootstrap-server broker1:9092 \
+  --create --topic scale-demo-topic-v2 \
+  --partitions 6 --replication-factor 2
+```
+
+Verify:
+
+```bash
+kafka-topics --bootstrap-server broker1:9092 \
+  --describe --topic scale-demo-topic-v2
 ```
 
 Expected:
 
-* **ISR = 3,3,3** across all partitions
-* No red values
-* No replica falling behind
-
-This is your replication safety baseline.
+* **Leader is 1 or 3**, not `none`
+* **Replicas** = two brokers
+* **ISR** = both replicas in sync
 
 ---
 
-# 📡 **STEP 4 — Start Consumer (T2)**
+# 🧑‍🏫 **STEP 4 — Start Consumer Group (T2 inside broker1)**
 
 ```bash
-docker exec -it broker1 kafka-console-consumer \
+kafka-console-consumer \
   --bootstrap-server broker1:9092 \
-  --topic throughput-demo-topic \
-  --group tuning-demo-group
+  --topic scale-demo-topic-v2 \
+  --group scale-demo-group
 ```
 
-This gives you real-time message flow.
+Leave it running.
 
 ---
 
-# 📊 **STEP 5 — Start Lag Monitor (T3)**
+# ⚡ **STEP 5 — Warm Up Offsets (T4)**
+
+This ensures lag monitor sees the group.
 
 ```bash
-./lag-monitor-tuning.sh
-```
-
-Expected:
-
-* Lag = **0** (green)
-* All partitions defined
-* No warnings or errors
-
-Lag rising during tuning is normal.
-Lag remaining high is **not**.
-
----
-
-# ⚙️ **STEP 6 — Baseline Throughput Test (T4)**
-
-```bash
-docker exec -it broker2 kafka-producer-perf-test \
-  --topic throughput-demo-topic \
-  --num-records 200000 \
+docker exec -it broker3 kafka-producer-perf-test \
+  --topic scale-demo-topic-v2 \
+  --num-records 20000 \
   --record-size 200 \
   --throughput -1 \
   --producer-props bootstrap.servers=broker1:9092 acks=1
 ```
 
-Observe:
+---
 
-* **T1** – ISR remains green
-* **T3** – Lag remains zero
-* **T2** – Steady flow of messages
-* **T4** – Baseline throughput and latency values
+# 📊 **STEP 6 — Start Monitoring Tools**
 
-This is your foundation for comparison.
+### **T1 — ISR Monitor**
+
+```bash
+./isr-monitor-scale.sh
+```
+
+You should see all ISR entries **green**.
 
 ---
 
-# 🚀 **STEP 7 — Tuning 1: Increase batch.size (T4)**
+### **T5 — Leader Distribution Monitor**
 
 ```bash
-docker exec -it broker2 kafka-producer-perf-test \
-  --topic throughput-demo-topic \
-  --num-records 200000 \
-  --record-size 200 \
-  --throughput -1 \
-  --producer-props bootstrap.servers=broker1:9092 acks=1 batch.size=65536
+./leader-monitor-scale.sh
 ```
 
-Watch for:
+Expected:
 
-* Higher records/sec
-* Higher MB/sec
-* Short yellow lag spikes
-* ISR must remain green
+```
+broker1: 3 leaders
+broker3: 3 leaders
+```
 
-Operator insight:
-**batch.size gives you the biggest boost for free.**
-It increases throughput without changing message semantics.
+Both shown in **green** (balanced).
 
 ---
 
-# 🚀 **STEP 8 — Tuning 2: Add linger.ms (T4)**
+### **T3 — Lag Monitor**
 
 ```bash
-docker exec -it broker2 kafka-producer-perf-test \
-  --topic throughput-demo-topic \
-  --num-records 200000 \
-  --record-size 200 \
-  --throughput -1 \
-  --producer-props bootstrap.servers=broker1:9092 acks=1 batch.size=65536 linger.ms=10
+./lag-monitor-scale.sh
 ```
 
-Watch for:
+You should now see:
 
-* Even higher throughput
-* Bursty consumer behavior
-* Lag spikes but returning to zero
-* ISR remains green
+* Rows for all partitions
+* `LAG = 0` in **green**
 
-Operator insight:
-**linger.ms is powerful but dangerous**.
-Even small values raise latency.
-Use only when throughput truly matters.
+---
+
+# 🔥 **STEP 7 — Main Throughput Load (T4)**
+
+```bash
+docker exec -it broker3 kafka-producer-perf-test \
+  --topic scale-demo-topic-v2 \
+  --num-records 500000 \
+  --record-size 200 \
+  --throughput -1 \
+  --producer-props bootstrap.servers=broker1:9092 acks=1
+```
+
+### Watch what happens:
+
+| Terminal | What You Narrate                                                    |
+| -------- | ------------------------------------------------------------------- |
+| **T4**   | Throughput increases after scaling. Records/sec and MB/sec improve. |
+| **T5**   | Leaders remain balanced. No hotspot.                                |
+| **T1**   | ISR remains stable and green. Replication healthy.                  |
+| **T3**   | Lag briefly spikes, then returns to **0** → system has stabilized.  |
+| **T2**   | Consumer keeps up with the scaled partitions.                       |
+
+This validates the cluster is **healthy and optimized** after scaling.
+
+---
+
+# 🛑 **STEP 8 — Stop Demo (Keep Cluster)**
+
+Do **not** shut down the cluster.
+Simply stop each pane:
+
+* `Ctrl+C` in T4 (producer)
+* `Ctrl+C` in T3 (lag monitor)
+* `Ctrl+C` in T5 (leader monitor)
+* `Ctrl+C` in T1 (isr monitor)
+* `Ctrl+C` in T2 (consumer)
+
+Cluster stays up for subsequent demos.
 
 ---
 
 # 🎯 **What You Learned**
 
-* **batch.size** increases throughput by sending larger payloads
-* **linger.ms** increases throughput further by waiting for batches to fill
-* Lag spikes are expected but must recover
-* ISR stability is non-negotiable
-* Correct tuning requires real-time validation via ISR + lag + throughput
+* **Lag stabilizes** after scaling partitions
+* **Leaders rebalance evenly** across brokers
+* **ISR remains healthy** under load
+* **Producer throughput improves** due to better parallelism
+* **Scaling verification is a must** before promoting changes to production
 
-The key principle:
-
-> **Throughput tuning is successful only when performance improves and durability remains untouched.**
+This is the exact workflow senior Kafka SREs use in real clusters.
 
 ---
 
-# 🧹 **Cleanup (Optional)**
+# 📌 **Support & 1:1 Coaching**
 
-```bash
-docker compose down
-```
+For deeper Kafka help or production architecture reviews:
 
-If you plan to run the next demo immediately, you can skip cleanup.
+### **📚 FullStackMaster | Master Kafka & Cloud**
 
----
+[https://fullstackmaster.net](https://fullstackmaster.net)
 
-# 🤝 **Need 1:1 Kafka Coaching?**
+### **🎯 Book a 1-on-1 Coaching Session**
 
-If you want to master real-world Kafka operations, tuning, troubleshooting, and architecture:
-
-**Book a 1:1 coaching session with me:**
-👉 [https://fullstackmaster.net/book](https://fullstackmaster.net/book)
-
-Or explore more at:
-👉 [https://fullstackmaster.net](https://fullstackmaster.net)
-
----
-
+[https://fullstackmaster.net/book](https://fullstackmaster.net/book)
  
