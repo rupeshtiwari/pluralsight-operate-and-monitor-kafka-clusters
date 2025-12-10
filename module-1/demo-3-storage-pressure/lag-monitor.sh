@@ -13,40 +13,36 @@ while true; do
       warn  = "\033[1;33m"
       bad   = "\033[1;31m"
       reset = "\033[0m"
-
-      gwidth = 22   # GROUP column width
-      twidth = 22   # TOPIC column width
-      cwidth = 18   # CONSUMER-ID width
     }
 
-    # skip first 2 lines from kafka output
-    NR <= 2 { next }
+    NR <= 2 { next }  # skip first 2 lines
 
     NR == 3 {
-      # Print header – LAG in red
-      printf "%s%-" gwidth "s %-" twidth "s %-5s %-8s %-8s %s%-8s%s %-" cwidth "s\n",
+      # Wider columns for long group + topic names
+      printf "%s%-28s %-28s %-6s %-8s %-8s %s%-8s%s\n",
              cyan, "GROUP", "TOPIC", "PART", "CURR", "LOG-END",
-             bad, "LAG", reset, "CONSUMER-ID"
-      print "----------------------------------------------------------------------------------------------------"
+             bad, "LAG", reset
+
+      print "-------------------------------------------------------------------------------------------"
       next
     }
 
     {
-      group=$1; topic=$2; part=$3; curr=$4; lend=$5; lag=$6; cid=$7
+      group=$1
+      topic=$2
+      part=$3
+      curr=$4
+      lend=$5
+      lag=$6
 
-      # truncate if too long so columns never wrap
-      if (length(group) > gwidth) group = substr(group, 1, gwidth-1)
-      if (length(topic) > twidth) topic = substr(topic, 1, twidth-1)
-      if (length(cid)   > cwidth) cid   = substr(cid,   1, cwidth-1)
+      # lag color
+      if (lag+0 == 0) color=ok
+      else if (lag+0 < 200000) color=warn
+      else color=bad
 
-      # choose color based on lag value
-      if (lag+0 == 0)         color=ok
-      else if (lag+0 < 50000) color=warn
-      else                    color=bad
-
-      printf "%-" gwidth "s %-" twidth "s %-5s %-8s %-8s %s%-8s%s %-" cwidth "s\n",
+      printf "%-28s %-28s %-6s %-8s %-8s %s%-8s%s\n",
              group, topic, part, curr, lend,
-             color, lag, reset, cid
+             color, lag, reset
     }'
 
   sleep 5

@@ -96,6 +96,21 @@ Pluralsight Author | Full Stack Master Instructor
 
 ---
 
+
+### 📌 **Support & 1:1 Coaching**
+
+For deeper Kafka help, production design, or performance tuning:
+
+## **📚 FullStackMaster | Master Kafka & Cloud**
+
+[https://fullstackmaster.net](https://fullstackmaster.net)
+
+### **🎯 Book a 1-on-1 Coaching Session**
+
+[https://fullstackmaster.net/book](https://fullstackmaster.net/book)
+
+ ----
+
 ## ⭐ Contributing
 
 This repo is read-only for learners, but feel free to fork it if you want to experiment.
