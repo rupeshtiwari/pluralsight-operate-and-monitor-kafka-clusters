@@ -1,124 +1,178 @@
+Here is your **updated top-level README.md**, rewritten cleanly, professionally, and aligned with your course branding.
+This version includes:
 
-# 📘 Operate and Monitor Kafka Clusters
+* A **Table of Contents**
+* Direct links to **each demo’s README** in Module 1
+* A structure that will scale as you add Module 2 and Module 3
+* Your FSM coaching footer
+* Clean Markdown formatting suitable for GitHub
+
+You can paste this directly into your root `README.md`.
+
+---
+
+# 📘 **Operate and Monitor Kafka Clusters**
 
 ### Official Companion Code for the Pluralsight Course by **Rupesh Tiwari**
 
-This repository contains all demo code, configuration files, and supporting resources used in the Pluralsight course **“Operate and Monitor Kafka Clusters.”**
-The goal of this repo is simple: give learners a clean, repeatable environment to practice the operational workflows demonstrated in the course.
+This repository hosts all the code, configs, scripts, and resources used in the Pluralsight course **Operate and Monitor Kafka Clusters**.
+
+The goal is simple:
+Provide a clean, repeatable environment so learners can **practice every operational workflow** taught in the course.
 
 ---
 
-## 🎯 Course Overview
+# 📑 **Table of Contents**
 
-Modern applications rely heavily on Apache Kafka, but running Kafka in production requires more than just spinning up brokers.
-This course teaches you how to:
+### **Module 1 – Operating Kafka Clusters with Best Practices**
 
-* Inspect and validate broker health
-* Detect and troubleshoot consumer lag
-* Confirm replication and ISR stability
-* Understand leadership distribution
-* Identify storage pressure and bottlenecks
-* Validate recovery after failures
-* Operate Kafka clusters confidently and safely
+1. **Inspect Brokers & Metadata Quorum**
+   👉 [`module-1/demo-1-inspect-brokers/README.md`](module-1/demo-1-inspect-brokers/README.md)
 
-Each demo is designed to simulate **real-world operational scenarios** that Kafka engineers encounter daily.
+2. **Detect Lag & Understand Consumer Behavior**
+   👉 [`module-1/demo-2-detect-lag/README.md`](module-1/demo-2-detect-lag/README.md)
+
+3. **Analyze Storage Pressure Effects**
+   👉 [`module-1/demo-3-storage-pressure/README.md`](module-1/demo-3-storage-pressure/README.md)
+
+4. **Test Durability Settings (acks & replication)**
+   👉 [`module-1/demo-4-durability-settings/README.md`](module-1/demo-4-durability-settings/README.md)
+
+5. **Tune Producer Throughput Settings**
+   👉 [`module-1/demo-5-producer-tuning/README.md`](module-1/demo-5-producer-tuning/README.md)
+
+6. **Scale Using More Partitions**
+   👉 [`module-1/demo-6-scale-partitions/README.md`](module-1/demo-6-scale-partitions/README.md)
 
 ---
 
-## 📂 Repository Structure
+## 🎯 **Course Overview**
+
+Modern applications rely heavily on Apache Kafka, but operating Kafka safely in production requires deep understanding of:
+
+* Broker and topic health
+* Consumer lag and rebalancing
+* ISR behavior and replication guarantees
+* Leadership distribution and partition balance
+* Storage pressure, retention enforcement, and log behavior
+* Producer and consumer tuning
+* Recovery workflows after failures
+
+Every demo in this repo simulates a **real-world operational scenario** that Kafka engineers face in production.
+
+---
+
+## 📂 **Repository Structure**
 
 ```
 pluralsight-operate-and-monitor-kafka-clusters/
 │
-├── src/
+├── code/
 │   ├── module-1/
-│   │   └── demo-1-inspect-brokers/
-│   │       ├── docker-compose.yml
-│   │       ├── commands.txt
-│   │       └── README.md
+│   │   ├── demo-1-inspect-brokers/
+│   │   ├── demo-2-detect-lag/
+│   │   ├── demo-3-storage-pressure/
+│   │   ├── demo-4-durability-settings/
+│   │   ├── demo-5-producer-tuning/
+│   │   └── demo-6-scale-partitions/
 │   │
-│   ├── module-2/   (coming soon)
-│   ├── module-3/   (coming soon)
-│   └── shared/
-│       └── scripts, helpers, configs
+│   ├── module-2/   ← coming soon
+│   ├── module-3/   ← coming soon
+│   └── shared/     ← common scripts, helpers, icons
 │
-└── README.md   ← (you are here)
+└── README.md   ← You are here
 ```
 
-The **`src/module-*`** directories mirror the Pluralsight course modules.
-Each demo is fully self-contained and can be run independently.
+Each demo folder contains:
+
+* A **README** with step-by-step instructions
+* All scripts used in the Pluralsight video
+* `docker-compose.yml`
+* Reusable helper scripts
+* Expected output or screenshots
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ **Tech Stack**
 
 This course uses:
 
-* **Apache Kafka (Confluent Platform)** – running in Docker containers
-* **ZooKeeper** (for module 1 demos)
-* **KRaft mode** (in later modules)
-* **VS Code** for CLI + config navigation
-* **Docker Compose** for orchestrating multi-broker clusters
+* **Apache Kafka 3.x** (KRaft + ZooKeeper variants)
+* **Docker Compose** for multi-broker environments
+* **kafka-topics**, **kafka-consumer-groups**, **kafka-producer-perf-test**
+* **VS Code** + integrated terminal
+* **Linux-friendly tools** (watch, awk, bash scripts)
 
-Everything works on macOS, Windows, and Linux.
+Everything runs cleanly on:
+
+* macOS (Intel + Apple Silicon)
+* Windows (WSL2 recommended)
+* Linux
 
 ---
 
-## 🚀 How to Run the Demos
+## 🚀 **How to Run Any Demo**
 
-Each demo folder includes a **README.md** with:
-
-* Required prerequisites
-* Step-by-step instructions
-* All CLI commands used in the video
-* Expected output screenshots
-* Troubleshooting notes
-
-To run any demo:
+Every demo can be executed independently.
 
 ```bash
-cd src/module-1/demo-1-inspect-brokers
+cd code/module-1/demo-1-inspect-brokers
 docker compose up -d
 ```
 
-Then follow the commands listed in the demo’s README.
+Then follow the instructions in the corresponding README.
+
+**Tip:**
+If you are learning Kafka operations seriously, run each demo *twice* — once following instructions, once improvising failures.
 
 ---
 
-## 🧑‍🏫 About the Author
+## 🧑‍🏫 **About the Author**
 
 **Rupesh Tiwari**
 Senior Customer Solutions Manager – Amazon Web Services
 Pluralsight Author | Full Stack Master Instructor
 
 🌐 [https://fullstackmaster.net](https://fullstackmaster.net)
-📘 Book a session: [https://fullstackmaster.net/book](https://fullstackmaster.net/book)
+🎯 Book 1-on-1 coaching: [https://fullstackmaster.net/book](https://fullstackmaster.net/book)
 
 ---
 
+# 📌 **Support & 1:1 Coaching**
 
-### 📌 **Support & 1:1 Coaching**
+If you want deeper help with Kafka production design, scaling, performance tuning, or building full data platforms, join me at:
 
-For deeper Kafka help, production design, or performance tuning:
-
-## **📚 FullStackMaster | Master Kafka & Cloud**
+### **📚 FullStackMaster — Master Kafka & Cloud**
 
 [https://fullstackmaster.net](https://fullstackmaster.net)
 
-### **🎯 Book a 1-on-1 Coaching Session**
+### **🎯 Book a private coaching session**
 
 [https://fullstackmaster.net/book](https://fullstackmaster.net/book)
 
- ----
+---
 
-## ⭐ Contributing
+## ⭐ **Contributing**
 
-This repo is read-only for learners, but feel free to fork it if you want to experiment.
-Issues and feedback are welcome.
+This repository is read-only for learners.
+You are welcome to fork it and build your own experiments.
+Issues and improvements are always appreciated.
 
 ---
 
 ## 📜 License
 
-All demo code is provided for educational use under the MIT License.
- 
+Educational use only.
+All demo code is licensed under MIT.
+
+---
+
+### ✔ README updated and ready for GitHub
+
+If you want:
+
+* A **Module 2 TOC template now**,
+* A **Course banner or diagram**, or
+* A **GitHub Pages docs site**,
+
+I can generate those next.
