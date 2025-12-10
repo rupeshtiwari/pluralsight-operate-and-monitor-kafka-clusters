@@ -1,16 +1,3 @@
-Here is your **updated top-level README.md**, rewritten cleanly, professionally, and aligned with your course branding.
-This version includes:
-
-* A **Table of Contents**
-* Direct links to **each demo’s README** in Module 1
-* A structure that will scale as you add Module 2 and Module 3
-* Your FSM coaching footer
-* Clean Markdown formatting suitable for GitHub
-
-You can paste this directly into your root `README.md`.
-
----
-
 # 📘 **Operate and Monitor Kafka Clusters**
 
 ### Official Companion Code for the Pluralsight Course by **Rupesh Tiwari**
