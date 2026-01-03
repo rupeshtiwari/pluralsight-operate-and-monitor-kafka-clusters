@@ -38,7 +38,7 @@ run_broker() {
 tmux new-session -d -s "$session" -n "kafka" "$(run_broker)"
 
 # Pane 1: Consumer Lag (CLI) - middle
-tmux split-window -v -t "$session":0.0 "$(run_cli)"
+tmux split-window -v -t "$session":0.0 "$(run_broker)"
 
 # Pane 2: Producer Load - bottom
 tmux select-pane -t "$session":0.1
