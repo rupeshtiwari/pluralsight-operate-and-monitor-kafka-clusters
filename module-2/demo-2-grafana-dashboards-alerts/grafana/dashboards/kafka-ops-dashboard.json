@@ -1,0 +1,73 @@
+{
+    "title": "Kafka Operational Health",
+    "uid": "kafka-ops",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+        {
+            "type": "timeseries",
+            "title": "Consumer Group Lag",
+            "targets": [
+                {
+                    "expr": "kafka_consumergroup_lag",
+                    "legendFormat": "{{consumergroup}} / {{topic}}"
+                }
+            ],
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Under Replicated Partitions",
+            "targets": [
+                {
+                    "expr": "kafka_server_replicamanager_underreplicatedpartitions",
+                    "legendFormat": "Broker {{instance}}"
+                }
+            ],
+            "gridPos": {
+                "x": 12,
+                "y": 0,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Broker Throughput (Bytes In)",
+            "targets": [
+                {
+                    "expr": "rate(kafka_server_brokertopicmetrics_bytesin_total[1m])",
+                    "legendFormat": "Broker {{instance}}"
+                }
+            ],
+            "gridPos": {
+                "x": 0,
+                "y": 8,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Request Latency (Total Time)",
+            "targets": [
+                {
+                    "expr": "rate(kafka_network_requestmetrics_totaltimems_sum[1m])",
+                    "legendFormat": "{{request}}"
+                }
+            ],
+            "gridPos": {
+                "x": 12,
+                "y": 8,
+                "w": 12,
+                "h": 8
+            }
+        }
+    ]
+}
