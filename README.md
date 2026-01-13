@@ -98,6 +98,18 @@ Everything runs cleanly on:
 
 ---
 
+## 🧩 Prerequisites
+
+To run the demos in this repository, you need:
+
+- Docker Desktop (with Docker Compose v2)
+- tmux (for multi-terminal demos)
+- Git (recommended)
+
+Installation links and OS-specific instructions are provided inside each demo’s README.
+
+---
+
 ## 🚀 **How to Run Any Demo**
 
 Every demo can be executed independently.

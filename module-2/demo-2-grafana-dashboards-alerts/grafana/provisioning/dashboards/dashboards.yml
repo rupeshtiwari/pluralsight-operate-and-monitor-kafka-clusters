@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: "Kafka Ops"
+    orgId: 1
+    folder: "Kafka Ops"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
