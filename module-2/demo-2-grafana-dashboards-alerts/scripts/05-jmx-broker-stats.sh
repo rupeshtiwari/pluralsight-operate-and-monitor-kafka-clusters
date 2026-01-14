@@ -1,33 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-JMX_URL="service:jmx:rmi:///jndi/rmi://broker1:9999/jmxrmi"
+EXEC_CONTAINER="broker1"
+BROKERS=(broker1 broker2 broker3)
+JMX_PORT="9999"
+
+jmx_url() {
+  local broker="$1"
+  echo "service:jmx:rmi:///jndi/rmi://${broker}:${JMX_PORT}/jmxrmi"
+}
+
+jmx_get() {
+  local url="$1" obj="$2" attr="$3"
+  docker exec "${EXEC_CONTAINER}" bash -lc "
+    unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS;
+    kafka-run-class kafka.tools.JmxTool --jmx-url '${url}' \
+      --object-name '${obj}' \
+      --attributes ${attr}
+  " | tail -n 2
+}
 
 echo ""
-echo "Controller sanity (ActiveControllerCount):"
-docker exec broker1 bash -lc "
-  unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS;
-  kafka-run-class kafka.tools.JmxTool --jmx-url '$JMX_URL' \
-    --object-name 'kafka.controller:type=KafkaController,name=ActiveControllerCount' \
-    --attributes Value
-" | tail -n 2
+echo "=== Broker Metrics (JMX) ==="
 
-echo ""
-echo "Broker pressure (RequestQueueSize):"
-docker exec broker1 bash -lc "
-  unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS;
-  kafka-run-class kafka.tools.JmxTool --jmx-url '$JMX_URL' \
-    --object-name 'kafka.network:type=RequestChannel,name=RequestQueueSize' \
-    --attributes Value
-" | tail -n 2
+for b in "${BROKERS[@]}"; do
+  URL="$(jmx_url "$b")"
+  echo ""
+  echo "--- ${b} ---"
 
-echo ""
-echo "Durability risk (UnderReplicatedPartitions):"
-docker exec broker1 bash -lc "
-  unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS;
-  kafka-run-class kafka.tools.JmxTool --jmx-url '$JMX_URL' \
-    --object-name 'kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions' \
-    --attributes Value
-" | tail -n 2
+  echo "Controller sanity (ActiveControllerCount):"
+  jmx_get "$URL" "kafka.controller:type=KafkaController,name=ActiveControllerCount" "Value"
 
-echo ""
+  echo ""
+  echo "Broker pressure (RequestQueueSize):"
+  jmx_get "$URL" "kafka.network:type=RequestChannel,name=RequestQueueSize" "Value"
+
+  echo ""
+  echo "Request handler idle (RequestHandlerAvgIdlePercent):"
+  jmx_get "$URL" "kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent" "Value"
+
+  echo ""
+  echo "Durability risk (UnderReplicatedPartitions):"
+  jmx_get "$URL" "kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions" "Value"
+done

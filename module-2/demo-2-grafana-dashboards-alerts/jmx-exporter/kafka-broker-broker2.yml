@@ -25,3 +25,18 @@ rules:
   - pattern: 'kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value'
     name: kafka_under_replicated_partitions
     type: GAUGE
+  # --- Request latency (Kafka RequestMetrics TotalTimeMs) ---
+  - pattern: 'kafka.network<type=RequestMetrics, name=TotalTimeMs, request=(.+)><>Mean'
+    name: kafka_request_total_time_ms_mean
+    labels:
+      request: "$1"
+
+  - pattern: 'kafka.network<type=RequestMetrics, name=TotalTimeMs, request=(.+)><>99thPercentile'
+    name: kafka_request_total_time_ms_p99
+    labels:
+      request: "$1"
+
+  - pattern: 'kafka.network<type=RequestMetrics, name=TotalTimeMs, request=(.+)><>Count'
+    name: kafka_request_total_time_ms_count
+    labels:
+      request: "$1"
