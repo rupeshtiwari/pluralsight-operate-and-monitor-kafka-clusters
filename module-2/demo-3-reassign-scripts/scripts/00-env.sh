@@ -8,7 +8,7 @@ BROKER_CONTAINER="broker1"
 # Avoid JMX env collisions inside containers
 KAFKA_ENV_FIX='unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS;'
 
-# ANSI colors (macOS Terminal + iTerm2)
+# ANSI colors
 BOLD="\033[1m"
 DIM="\033[2m"
 RESET="\033[0m"
@@ -22,7 +22,7 @@ GRAY="\033[90m"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo -e "${RED}Missing dependency:${RESET} $1"; exit 1; }; }
 
-# Required for formatted output
+# Required for formatted output (host tools)
 need jq
 need pr
 need awk

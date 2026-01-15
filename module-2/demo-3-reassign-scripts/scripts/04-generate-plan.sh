@@ -4,7 +4,9 @@ source "$(dirname "$0")/00-env.sh"
 
 h1 "STEP 3 (Terminal B): Generate Reassignment Plan"
 hr
-printf "%b\n" "${DIM}Goal: add broker3 into replica sets so the cluster is not concentrated on brokers 1 and 2${RESET}"
+printf "%b\n" "${DIM}Terminal B generates and applies the reassignment plan${RESET}"
+hr
+printf "%b\n" "${DIM}Goal: move replicas so broker3 participates${RESET}"
 hr
 
 docker exec "$BROKER_CONTAINER" bash -lc "
@@ -18,55 +20,56 @@ EOF
     --topics-to-move-json-file /tmp/topics-to-move.json \
     --broker-list \"1,2,3\" | tee /tmp/reassign-generate.out
 
-  # CURRENT assignment JSON
+  # Extract EXACTLY ONE JSON line for CURRENT and PROPOSED.
   awk '
-    /Current partition replica assignment/ {flag=1; next}
-    flag {print}
-  ' /tmp/reassign-generate.out | sed '/^[[:space:]]*$/d' > /tmp/reassign-current.json
+    /Current partition replica assignment/ {
+      getline; while (\$0 ~ /^[[:space:]]*$/) getline;
+      print; exit
+    }
+  ' /tmp/reassign-generate.out > /tmp/reassign-current.json
 
-  # PROPOSED assignment JSON
   awk '
-    /Proposed partition reassignment configuration/ {flag=1; next}
-    /Current partition replica assignment/ {flag=0}
-    flag {print}
-  ' /tmp/reassign-generate.out | sed '/^[[:space:]]*$/d' > /tmp/reassign.json
+    /Proposed partition reassignment configuration/ {
+      getline; while (\$0 ~ /^[[:space:]]*$/) getline;
+      print; exit
+    }
+  ' /tmp/reassign-generate.out > /tmp/reassign.json
 " >/dev/null
 
-ok "Saved JSON in broker1:"
-printf "%b\n" "  ${CYAN}/tmp/reassign-current.json${RESET}  (before)"
+ok "Saved plan files in broker1:"
+printf "%b\n" "  ${CYAN}/tmp/reassign-current.json${RESET}  (current)"
 printf "%b\n" "  ${CYAN}/tmp/reassign.json${RESET}          (proposed)"
 hr
 
 cur_json="$(docker exec "$BROKER_CONTAINER" bash -lc "cat /tmp/reassign-current.json")"
 prop_json="$(docker exec "$BROKER_CONTAINER" bash -lc "cat /tmp/reassign.json")"
 
-printf "%b\n" "${BOLD}${CYAN}Replica movement summary (what you narrate):${RESET}"
+echo "$cur_json" | jq . >/dev/null || fail "Current JSON is invalid"
+echo "$prop_json" | jq . >/dev/null || fail "Proposed JSON is invalid"
+
+printf "%b\n" "${BOLD}${CYAN}Replica Move Summary:${RESET}"
 hr
-printf "%b\n" "${BOLD}${BLUE}Partition${RESET}  ${BOLD}${BLUE}Current Replicas${RESET}  ${BOLD}${BLUE}Proposed Replicas${RESET}"
+printf "%b\n" "${BOLD}${BLUE}Partition${RESET}  ${BOLD}${BLUE}Current${RESET}  ${BOLD}${BLUE}Proposed${RESET}"
 
-export CUR="$cur_json"
-export PROP="$prop_json"
-python3 - <<'PY' | column -t -s $'\t'
-import os, json
-cur = json.loads(os.environ["CUR"])
-prop = json.loads(os.environ["PROP"])
+cur_tsv="$(echo "$cur_json" | jq -r '.partitions[] | "\(.partition)\t\(.replicas|join(","))"')"
+prop_tsv="$(echo "$prop_json" | jq -r '.partitions[] | "\(.partition)\t\(.replicas|join(","))"')"
 
-def to_map(doc):
-    out = {}
-    for p in doc.get("partitions", []):
-        out[p["partition"]] = ",".join(str(x) for x in p["replicas"])
-    return out
-
-mcur = to_map(cur)
-mprop = to_map(prop)
-for part in sorted(set(mcur) | set(mprop)):
-    print(f"{part}\t{mcur.get(part,'-')}\t{mprop.get(part,'-')}")
-PY
+awk -F'\t' '
+  NR==FNR { cur[$1]=$2; next }
+  { prop[$1]=$2 }
+  END {
+    for (i=0; i<1000; i++) if (i in cur || i in prop) {
+      c = (i in cur) ? cur[i] : "-"
+      p = (i in prop) ? prop[i] : "-"
+      printf "%d\t%s\t%s\n", i, c, p
+    }
+  }
+' <(printf "%s\n" "$cur_tsv") <(printf "%s\n" "$prop_tsv") | column -t -s $'\t'
 
 hr
-printf "%b\n" "${BOLD}${CYAN}Proposed JSON (pretty, 3 columns):${RESET}"
+printf "%b\n" "${BOLD}${CYAN}Execution Plan Preview:${RESET}"
 hr
-printf "%s\n" "$prop_json" | jq . | pr -3 -t -w 180
-hr
+printf "%s\n" "$prop_json" | jq -c -C '.partitions[] | {partition, replicas}'
 
-warn "Next (mandatory): run ./scripts/05-execute-plan.sh"
+hr
+warn "Next: run ./scripts/05-execute-plan.sh"

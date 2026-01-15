@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/00-env.sh"
 
-h1 "STEP 5 (T2): Verify Reassignment Progress"
+h1 "STEP 5 (Terminal B): Verify Reassignment"
 hr
 
 out="$(docker exec "$BROKER_CONTAINER" bash -lc "
@@ -16,7 +16,7 @@ printf "%s\n" "$out" | while IFS= read -r line; do
     printf "%b\n" "${BOLD}${CYAN}${line}${RESET}"
   elif echo "$line" | grep -qi "completed"; then
     printf "%b\n" "${GREEN}${BOLD}${line}${RESET}"
-  elif echo "$line" | grep -qi "failed\\|error"; then
+  elif echo "$line" | grep -qi "failed\|error"; then
     printf "%b\n" "${RED}${BOLD}${line}${RESET}"
   elif echo "$line" | grep -qi "no active reassignment"; then
     printf "%b\n" "${YELLOW}${BOLD}${line}${RESET}"
@@ -26,4 +26,4 @@ printf "%s\n" "$out" | while IFS= read -r line; do
 done
 
 hr
-warn "If you see yellow lines saying replica set differs, you skipped STEP 4. Run ./scripts/05-execute-plan.sh, then verify again."
+warn "If you see yellow 'replica set differs', rerun STEP 4, then verify again"
