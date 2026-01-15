@@ -1,71 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-time output (no watch) so the screen is calm at font size 14.
-source "$(dirname "$0")/scripts/00-env.sh"
-source "$(dirname "$0")/scripts/99-ui.sh"
+TOPIC="${TOPIC:-ops-demo-reassign-v1}"
+BROKER="${BROKER:-broker1:9092}"
 
-ui_h1 "LEADER DISTRIBUTION (post-scale verification)"
-ui_kv "Topic" "$TOPIC"
-
-raw=$(docker exec "$BROKER_CONTAINER" bash -lc "$KAFKA_ENV_FIX kafka-topics --bootstrap-server $BOOTSTRAP --describe --topic $TOPIC" || true)
-
-if [[ -z "${raw// /}" ]]; then
-  printf "%b %s\n" "$(ui_tag "$RED" "ERROR")" "Topic describe returned empty output"
-  exit 1
-fi
-
-# NOTE: macOS ships Bash 3.2 by default, which does NOT support associative arrays.
-# So we do all counting in awk and keep this script Bash-3.2 compatible.
-
-# Produce a simple table: brokerId count share
-tmp_lines=$(echo "$raw" | awk '
-  /Leader:/ {
-    for (i=1; i<=NF; i++) {
-      if ($i=="Leader:") { leader=$(i+1); break }
-    }
-    if (leader ~ /^[0-9]+$/) { c[leader]++; total++; }
-  }
-  END {
-    for (b in c) {
-      share = (total>0) ? int((c[b]/total)*100 + 0.5) : 0
-      printf "%s %s %s\n", b, c[b], share
-    }
-    printf "__TOTAL__ %s\n", total
-  }
-')
-
-total=$(echo "$tmp_lines" | awk '$1=="__TOTAL__"{print $2}')
-
-# Determine min/max counts for a balance hint
-min=$(echo "$tmp_lines" | awk '$1!="__TOTAL__"{print $2}' | sort -n | head -n 1)
-max=$(echo "$tmp_lines" | awk '$1!="__TOTAL__"{print $2}' | sort -n | tail -n 1)
+# Basic colors (avoid unbound vars)
+BOLD="\033[1m"; RESET="\033[0m"; DIM="\033[2m"; CYAN="\033[36m"
+hr(){ printf "%s\n" "────────────────────────────────────────────────────────────────────────────────"; }
 
 echo
-printf "%b%-12s %-12s %-14s%b\n" "$BOLD$PURPLE" "Broker" "Leader count" "Share" "$RESET"
-ui_hr
+echo "${BOLD}LEADER DISTRIBUTION (post-scale verification)${RESET}"
+hr
+printf "${DIM}Topic:${RESET}             ${CYAN}%s${RESET}\n\n" "$TOPIC"
 
-echo "$tmp_lines" \
-  | awk '$1!="__TOTAL__"{print $0}' \
-  | sort -n \
-  | while read -r id c share; do
-      color="$GREEN"
-      # If noticeably imbalanced, highlight the max count in yellow
-      if [[ -n "${min:-}" && -n "${max:-}" ]]; then
-        diff=$((max - min))
-        if (( diff >= 2 )); then
-          if (( c == max )); then color="$YELLOW"; fi
-        fi
-      fi
-      printf "%-12s %b%-12s%b %-14s\n" "broker${id}" "$BOLD$color" "$c" "$RESET" "${share}%"
-    done
+out="$(docker exec broker1 bash -lc "kafka-topics --bootstrap-server $BROKER --describe --topic $TOPIC")"
+
+# Count leaders by broker id
+counts="$(printf "%s\n" "$out" | awk '
+  /Partition:/ {
+    for(i=1;i<=NF;i++){
+      if($i=="Leader:"){ l=$(i+1); c[l]++ }
+    }
+  }
+  END { for (b in c) printf "%s\t%d\n", b, c[b] }
+' | sort -n)"
+
+total="$(printf "%s\n" "$counts" | awk -F'\t' '{s+=$2} END{print s+0}')"
+
+printf "${BOLD}%-12s %-12s %-12s${RESET}\n" "Broker" "Leader count" "Share"
+hr
+
+for b in 1 2 3; do
+  n="$(printf "%s\n" "$counts" | awk -F'\t' -v b="$b" '$1==b{print $2}')"
+  n="${n:-0}"
+  share=0
+  if [[ "$total" -gt 0 ]]; then share=$(( n * 100 / total )); fi
+  printf "%-12s %-12s %-12s\n" "broker${b}" "$n" "${share}%"
+done
 
 echo
-ui_kv "Total partitions" "$total"
-
-diff=$((max - min))
-if (( diff >= 2 )); then
-  printf "%b %s\n" "$(ui_tag "$YELLOW" "NOTE")" "Leader distribution is slightly uneven (max-min >= 2)"
-else
-  printf "%b %s\n" "$(ui_tag "$GREEN" "OK")" "Leader distribution looks balanced"
-fi
+printf "${DIM}Total partitions:${RESET}  ${BOLD}%s${RESET}\n" "$total"

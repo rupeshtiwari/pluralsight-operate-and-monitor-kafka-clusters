@@ -1,26 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Demo 4 (Module 2): Monitor Cluster After Scaling Actions
-#
-# Goal: prepare a deterministic state so the recorded demo is ONLY verification.
-#
-# RECORDING FLOW:
-#   1) ./run-demo.sh      # prep + startup
-#   2) Start recording
-#   3) ./start-load.sh    # create short, controlled load
-#   4) ./watch-lag.sh     # observe lag trend
-#   5) ./show-leaders.sh  # confirm leader balance
-
 export COMPOSE_PROJECT_NAME=ps-kafka-m2-demo4
 export COMPOSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
-
 unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROFILES
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-# Defaults (required because we use set -u)
 TOPIC="${TOPIC:-ops-demo-reassign-v1}"
 GROUP="${GROUP:-ops-demo-monitor-group}"
 BROKER="${BROKER:-broker1:9092}"
@@ -32,65 +19,116 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1"; exi
 need docker
 
 clear || true
-ui_h1 "DEMO 4 PREP (deterministic startup)"
+ui_h1 "DEMO 4 STARTUP"
+hr
+printf "%b\n" "${DIM}Deterministic startup: brokers up, topic ready, consumer group started, offsets seeded${RESET}"
+hr
+echo
 
 ui_tag "STEP 1"
-echo "Starting containers (ZooKeeper + 3 brokers)"
-docker compose up -d --force-recreate --remove-orphans >/dev/null
+printf "%b\n" "${BOLD}Start containers${RESET}"
 
-echo ""
-ui_tag "STEP 2"
-echo "Waiting for Kafka on broker1:9092"
-
-for i in {1..120}; do
-  if docker exec broker1 bash -lc "ps aux | grep -E '[k]afka.Kafka' >/dev/null"; then
-    if docker exec broker1 bash -lc "bash -lc '</dev/tcp/localhost/9092' >/dev/null 2>&1"; then
-      ui_ok "Kafka is listening on broker1:9092"
-      break
-    fi
-  fi
-  sleep 1
-done
-
-if ! docker exec broker1 bash -lc "unset JMX_PORT KAFKA_JMX_PORT KAFKA_JMX_OPTS; kafka-topics --bootstrap-server '$BROKER' --list >/dev/null 2>&1"; then
-  echo ""
-  ui_err "Kafka is not ready. Printing broker1 logs"
-  docker compose ps -a || true
-  docker compose logs broker1 --tail=200 || true
-  exit 1
+# Clean up stale network from older runs (safe)
+if docker network inspect ps-kafka-m2-demo4-net >/dev/null 2>&1; then
+  ui_tag "CLEANUP"
+  echo "Removing stale network: ps-kafka-m2-demo4-net"
+  docker network rm ps-kafka-m2-demo4-net >/dev/null 2>&1 || true
 fi
 
-echo ""
-ui_tag "STEP 3"
-echo "Preparing topic + consumer group (idempotent)"
-./scripts/01-prepare-state.sh
-./scripts/02-start-consumer-bg.sh
+docker compose up -d --remove-orphans >/dev/null 2>&1
+ui_ok "Containers launched"
+echo
 
-echo ""
-ui_tag "SEED"
-echo "Initializing offsets so lag table is ready (50 records)"
+ui_tag "STEP 2"
+printf "%b\n" "${BOLD}Wait for ZooKeeper + brokers healthy${RESET}"
 
-# Seed a few records so the consumer commits offsets (NOT load)
-docker exec broker1 bash -lc "seq 1 50 | kafka-console-producer --bootstrap-server '$BROKER' --topic '$TOPIC' >/dev/null 2>&1" || true
-
-# Wait until consumer-group describe returns rows (max ~10s)
-ui_tag "WAIT"
-echo "Waiting for consumer offsets to appear"
-for i in {1..10}; do
-  if docker exec broker1 bash -lc "kafka-consumer-groups --bootstrap-server '$BROKER' --group '$GROUP' --describe 2>/dev/null | grep -q \"^$TOPIC[[:space:]]\""; then
-    ui_ok "Lag table is ready"
+# Wait for ZooKeeper health
+for i in {1..60}; do
+  zk="$(docker inspect -f '{{.State.Health.Status}}' zookeeper 2>/dev/null || echo starting)"
+  if [[ "$zk" == "healthy" ]]; then
+    ui_ok "ZooKeeper is healthy"
     break
+  fi
+  if (( i == 60 )); then
+    ui_err "ZooKeeper did not become healthy"
+    docker logs zookeeper --tail 120 || true
+    exit 1
   fi
   sleep 1
 done
 
-echo ""
-ui_tag "READY"
-echo "Prep complete. You are ready to record"
+# Wait for brokers health
+for i in {1..120}; do
+  b1="$(docker inspect -f '{{.State.Health.Status}}' broker1 2>/dev/null || echo starting)"
+  b2="$(docker inspect -f '{{.State.Health.Status}}' broker2 2>/dev/null || echo starting)"
+  b3="$(docker inspect -f '{{.State.Health.Status}}' broker3 2>/dev/null || echo starting)"
 
-echo ""
-ui_h1 "RECORDING COMMANDS (one terminal at a time)"
-printf "  %b%s%b\n" "$BOLD" "./start-load.sh" "$RESET"
-printf "  %b%s%b\n" "$BOLD" "./watch-lag.sh" "$RESET"
-printf "  %b%s%b\n" "$BOLD" "./show-leaders.sh" "$RESET"
+  if [[ "$b1" == "healthy" && "$b2" == "healthy" && "$b3" == "healthy" ]]; then
+    ui_ok "All brokers are healthy"
+    break
+  fi
+
+  if (( i == 120 )); then
+    ui_err "One or more brokers did not become healthy"
+    echo "broker1=$b1 broker2=$b2 broker3=$b3"
+    docker logs broker1 --tail 120 || true
+    docker logs broker2 --tail 120 || true
+    docker logs broker3 --tail 120 || true
+    exit 1
+  fi
+  sleep 1
+done
+echo
+
+export TOPIC GROUP BROKER
+
+ui_tag "STEP 3"
+printf "%b\n" "${BOLD}Prepare topic + consumer group${RESET}"
+./scripts/01-prepare-state.sh >/dev/null 2>&1
+./scripts/02-start-consumer-bg.sh >/dev/null 2>&1
+ui_ok "Topic and consumer group created"
+echo
+
+ui_tag "STEP 4"
+printf "%b\n" "${BOLD}Seed offsets until lag is visible${RESET}"
+
+# Keep seeding until offsets show up (max ~20s)
+for i in {1..20}; do
+  docker exec broker1 bash -lc "printf 'seed-%s\n' $i | kafka-console-producer --bootstrap-server '$BROKER' --topic '$TOPIC' >/dev/null 2>&1" || true
+  sleep 1
+
+  # FIX: output columns are GROUP TOPIC PARTITION CURRENT LOG_END LAG ...
+  if docker exec broker1 bash -lc "kafka-consumer-groups --bootstrap-server '$BROKER' --group '$GROUP' --describe 2>/dev/null \
+      | awk -v g='$GROUP' -v t='$TOPIC' '\$1==g && \$2==t {found=1} END{exit !found}'"; then
+    ui_ok "Offsets visible (lag table will show rows)"
+    break
+  fi
+
+  if (( i == 20 )); then
+    ui_err "Offsets still not visible. Consumer is not committing (or consumer failed)."
+    echo "Check: docker exec broker1 bash -lc \"tail -n 50 /tmp/demo4_consumer.log\""
+    exit 1
+  fi
+done
+echo
+
+ui_h1 "ENV CHECKLIST"
+hr
+printf "%b\n" "${GREEN}•${RESET} ${BOLD}ZooKeeper${RESET} healthy"
+printf "%b\n" "${GREEN}•${RESET} ${BOLD}Brokers${RESET} healthy (3)"
+printf "%b\n" "${GREEN}•${RESET} ${BOLD}Topic${RESET}: ${CYAN}$TOPIC${RESET}"
+printf "%b\n" "${GREEN}•${RESET} ${BOLD}Group${RESET}: ${CYAN}$GROUP${RESET}"
+printf "%b\n" "${GREEN}•${RESET} Offsets seeded so lag is visible"
+hr
+echo
+
+ui_h1 "START THE DEMO"
+hr
+printf "%b\n" "${BOLD}Terminal B${RESET}  ${DIM}(observation)${RESET}"
+printf "%b\n" "  ${BOLD}./watch-lag.sh${RESET}"
+echo
+printf "%b\n" "${BOLD}Terminal A${RESET}  ${DIM}(action)${RESET}"
+printf "%b\n" "  ${BOLD}./start-load.sh${RESET}"
+printf "%b\n" "  ${BOLD}./show-leaders.sh${RESET}"
+hr
 echo

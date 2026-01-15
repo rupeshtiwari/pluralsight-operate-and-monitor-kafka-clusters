@@ -1,69 +1,85 @@
 #!/usr/bin/env bash
-set -e
-
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "$HERE/99-ui.sh"
+set -euo pipefail
 
 TOPIC="${TOPIC:-ops-demo-reassign-v1}"
 GROUP="${GROUP:-ops-demo-monitor-group}"
 BROKER="${BROKER:-broker1:9092}"
 REFRESH_SEC="${REFRESH_SEC:-2}"
+LOG="/tmp/demo4_consumer.log"
 
-WARN_LAG="${WARN_LAG:-100}"
-CRIT_LAG="${CRIT_LAG:-1000}"
+BOLD="\033[1m"; RESET="\033[0m"; DIM="\033[2m"
+GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"
 
-print_once() {
-  # Get consumer group describe output
-  local raw
-  raw="$(docker exec broker1 bash -lc "kafka-consumer-groups --bootstrap-server '$BROKER' --group '$GROUP' --describe 2>/dev/null" || true)"
+hr() { printf "%s\n" "--------------------------------------------------------------------------------"; }
+hide_cursor() { printf "\033[?25l"; }
+show_cursor() { printf "\033[?25h"; }
+trap show_cursor EXIT
 
-  # If no output, do NOT clear screen (prevents flashing)
-  if [ -z "${raw}" ]; then
-    # Print warning only once per run
-    if [ "${NO_ROWS_SHOWN:-0}" -eq 0 ]; then
-      export NO_ROWS_SHOWN=1
-      title "CONSUMER LAG (post-scale verification)"
-      kv "Topic" "$TOPIC"
-      kv "Group" "$GROUP"
-      kv "Refresh" "${REFRESH_SEC}s"
-      printf "\n"
-      warn "No consumer-group output yet"
-      warn "This means: no committed offsets yet (or consumer not running)"
-      printf "\n"
-      info "Fix: run ./start-load.sh once to generate messages, then lag rows will appear"
-      printf "\n"
-    fi
+fetch() {
+  docker exec broker1 bash -lc "
+    env -u JMX_PORT -u KAFKA_JMX_PORT -u KAFKA_JMX_OPTS -u KAFKA_OPTS -u JAVA_TOOL_OPTIONS \
+      kafka-consumer-groups --bootstrap-server '$BROKER' --group '$GROUP' --describe 2>&1 || true
+  "
+}
+
+render() {
+  local raw rows
+
+  raw="$(fetch)"
+
+  # Home + clear to end (no scrolling)
+  printf "\033[H\033[J"
+
+  echo
+  echo -e "${CYAN}${BOLD}Consumer Lag${RESET} ${DIM}(group=${GROUP}, topic=${TOPIC}, refresh=${REFRESH_SEC}s)${RESET}"
+  hr
+  printf "${BOLD}%-24s %-10s %-14s %-14s %-10s${RESET}\n" "TOPIC" "PARTITION" "CURRENT" "LOG_END" "LAG"
+  hr
+
+  if echo "$raw" | grep -qiE "not found|does not exist"; then
+    echo -e "${YELLOW}${BOLD}Group not visible yet.${RESET}"
+    echo -e "${DIM}Check consumer:${RESET} docker exec broker1 bash -lc \"tail -n 50 $LOG\""
+    hr
     return 0
   fi
 
-  # We have output, now it's OK to clear and redraw
-  unset NO_ROWS_SHOWN
-  clear
-  title "CONSUMER LAG (post-scale verification)"
-  kv "Topic" "$TOPIC"
-  kv "Group" "$GROUP"
-  kv "Refresh" "${REFRESH_SEC}s"
-  printf "\n"
+  if echo "$raw" | grep -qiE "timed out|error|failed|exception"; then
+    echo -e "${YELLOW}${BOLD}Kafka CLI error:${RESET}"
+    echo "$raw" | sed -n '1,6p'
+    hr
+    return 0
+  fi
 
-  printf "${BOLD}%-26s %-10s %-14s %-14s %-8s${RESET}\n" "Topic" "Partition" "Current" "Log end" "Lag"
-  hr
+  # Correct parsing: GROUP TOPIC PARTITION CURRENT LOG_END LAG ...
+  rows="$(
+    echo "$raw" | awk -v g="$GROUP" -v t="$TOPIC" '
+      $1==g && $2==t && $3 ~ /^[0-9]+$/ { print $2, $3, $4, $5, $6 }
+    '
+  )"
 
-  echo "$raw" | awk 'BEGIN{OFS="\t"} NR>1 && $1!="" {print $1,$2,$3,$4,$5}' | while IFS=$'\t' read -r t p cur end lag; do
-    [ -z "$t" ] && continue
-    cur="${cur:--}"
-    end="${end:--}"
-    lag="${lag:--}"
+  if [[ -z "${rows// /}" ]]; then
+    echo -e "${YELLOW}${BOLD}No rows yet (offsets not committed).${RESET}"
+    echo -e "${DIM}Check:${RESET} docker exec broker1 bash -lc \"tail -n 50 $LOG\""
+    hr
+    return 0
+  fi
 
-    local lag_fmt
-    lag_fmt="$(lag_color "$lag" "$WARN_LAG" "$CRIT_LAG")"
-
-    printf "%-26s %-10s %-14s %-14s %b\n" "$t" "$p" "$cur" "$end" "$lag_fmt"
+  echo "$rows" | while read -r topic partition cur end lag; do
+    lag_color="$DIM"
+    if [[ "$lag" =~ ^[0-9]+$ ]]; then
+      if (( lag == 0 )); then lag_color="$GREEN"
+      elif (( lag < 5000 )); then lag_color="$YELLOW"
+      else lag_color="$RED"
+      fi
+    fi
+    printf "%-24s %-10s %-14s %-14s ${lag_color}%-10s${RESET}\n" \
+      "$topic" "$partition" "$cur" "$end" "$lag"
   done
+  hr
 }
 
-
+hide_cursor
 while true; do
-  print_once
+  render
   sleep "$REFRESH_SEC"
 done

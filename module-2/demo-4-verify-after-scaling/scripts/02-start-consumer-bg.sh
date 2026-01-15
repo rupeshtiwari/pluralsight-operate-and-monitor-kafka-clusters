@@ -1,46 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname "$0")/00-env.sh"
 
-PID_FILE="/tmp/demo4_consumer.pid"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$HERE/99-ui.sh"
+
+TOPIC="${TOPIC:-ops-demo-reassign-v1}"
+GROUP="${GROUP:-ops-demo-monitor-group}"
+BROKER="${BROKER:-broker1:9092}"
+
 LOG_FILE="/tmp/demo4_consumer.log"
+PID_FILE="/tmp/demo4_consumer.pid"
 
-# Stop any previous consumer started by this script
-if docker exec "$BROKER_CONTAINER" bash -lc "test -s $PID_FILE" >/dev/null 2>&1; then
-  old_pid=$(docker exec "$BROKER_CONTAINER" bash -lc "cat $PID_FILE" || true)
-  if [[ -n "${old_pid:-}" ]]; then
-    docker exec "$BROKER_CONTAINER" bash -lc "kill $old_pid >/dev/null 2>&1 || true"
+ui_tag "CONSUMER"
+echo "Starting background consumer (stable + commits offsets) group=$GROUP"
+
+# Stop old consumer if any
+docker exec broker1 bash -lc "
+  if [ -f '$PID_FILE' ]; then
+    pid=\$(cat '$PID_FILE' 2>/dev/null || true)
+    if [ -n \"\$pid\" ] && kill -0 \"\$pid\" 2>/dev/null; then
+      kill \"\$pid\" 2>/dev/null || true
+    fi
+    rm -f '$PID_FILE'
   fi
-  docker exec "$BROKER_CONTAINER" bash -lc "rm -f $PID_FILE" || true
-fi
+  : > '$LOG_FILE'
+" >/dev/null 2>&1 || true
 
-# Start a long-running consumer group in the background.
-# This makes lag metrics meaningful when you later start producer load.
-echo "Starting background consumer group '$GROUP' on topic '$TOPIC' (logs: $LOG_FILE)"
+# Start a long-lived consumer that auto-commits every 1s.
+# NOTE: we keep output quiet; errors go to the log.
+docker exec broker1 bash -lc "
+  nohup kafka-console-consumer \
+    --bootstrap-server '$BROKER' \
+    --topic '$TOPIC' \
+    --group '$GROUP' \
+    --consumer-property enable.auto.commit=true \
+    --consumer-property auto.commit.interval.ms=1000 \
+    --consumer-property auto.offset.reset=earliest \
+    --timeout-ms 600000 \
+    >/dev/null 2>>'$LOG_FILE' &
+  echo \$! > '$PID_FILE'
+" >/dev/null
 
-# NOTE: We must escape $! so it is expanded inside the container shell, not by this script.
-docker exec "$BROKER_CONTAINER" bash -lc "
-  set -e
-  $KAFKA_ENV_FIX
-  nohup kafka-console-consumer \\
-    --bootstrap-server $BOOTSTRAP \\
-    --topic $TOPIC \\
-    --group $GROUP \\
-    --from-beginning \\
-    --formatter kafka.tools.DefaultMessageFormatter \\
-    --property print.partition=true \\
-    --property print.offset=true \\
-    --property print.value=false \\
-    --property print.key=false \\
-    --property print.timestamp=false \\
-    > $LOG_FILE 2>&1 &
-  echo \$! > $PID_FILE
-"
-
-pid=$(docker exec "$BROKER_CONTAINER" bash -lc "cat $PID_FILE" || true)
-if [[ -z "${pid:-}" ]]; then
-  echo "ERROR: consumer failed to start"
+# Verify process is alive
+pid="$(docker exec broker1 bash -lc "cat '$PID_FILE' 2>/dev/null || true" || true)"
+if [ -z "${pid:-}" ]; then
+  ui_err "Consumer failed to start (no pid). Check: docker exec broker1 bash -lc \"tail -n 50 $LOG_FILE\""
   exit 1
 fi
 
-echo "Consumer started (pid=$pid)"
+if ! docker exec broker1 bash -lc "kill -0 '$pid' 2>/dev/null"; then
+  ui_err "Consumer exited immediately. Check: docker exec broker1 bash -lc \"tail -n 50 $LOG_FILE\""
+  exit 1
+fi
+
+ui_ok "Consumer running (pid=$pid)"
