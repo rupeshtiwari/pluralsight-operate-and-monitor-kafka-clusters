@@ -1,32 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BROKER="broker2"
+# High-signal broker2 log view for correlation with Grafana timestamps.
+# Keep this running BEFORE you trigger the incident (broker2 restart).
 
-echo ""
-echo "Broker2 high-signal events (filtered)"
-echo "Tip: when Grafana spikes, read 1-2 lines with the same timestamp."
-echo ""
+FILTER_RE='Resigned|Controlled shutdown request|Registered broker|Starting|Started|kafka\.controller|LeaderAndIsr|become-(leader|follower)|ERROR|WARN'
 
-# Include only incident-worthy keywords
-INCLUDE='ERROR|WARN|Shutdown|Starting|started|Resigned|KafkaController|LeaderAndIsr|become-leader|become-follower|ISR|UnderReplicated|NotLeaderOrFollower|NOT_LEADER_OR_FOLLOWER|NetworkClient|Disconnected|Reconnected'
+printf "\nBroker2 high-signal events (Ctrl+C to stop)\n"
+printf "Filter: %s\n\n" "$FILTER_RE"
+printf "%-23s %-5s %s\n" "TIME" "LVL" "EVENT"
+printf "%-23s %-5s %s\n" "-----------------------" "-----" "-----------------------------------------------"
 
-# Exclude common noise (tune this list if needed)
-EXCLUDE='__consumer_offsets|ExpirationReaper|DelayedOperationPurgatory|Throttle|Throttled|Truncating partition|ReplicaAlterLogDirs|LogDirFailureHandler'
-
-# Header
-printf "%-23s %-5s %-18s %s\n" "timestamp" "lvl" "component" "message"
-printf "%-23s %-5s %-18s %s\n" "-----------------------" "-----" "------------------" "------------------------------"
-
-docker logs -f --since 10m "$BROKER" 2>&1 \
-  | egrep -i "$INCLUDE" \
-  | egrep -iv "$EXCLUDE" \
-  | awk '{
-      ts=$1; lvl=$3;
-      comp=$4;
-      $1=""; $2=""; $3=""; $4="";
-      msg=$0;
-      gsub(/^ +/,"",msg);
-      printf "%-23s %-5s %-18s %s\n", ts, lvl, comp, msg;
-      fflush();
-    }'
+docker logs -f broker2 2>&1 \
+  | egrep -i "$FILTER_RE" \
+  | awk '
+      {
+        # Typical format:
+        # [2026-01-20 08:15:51,751] WARN [Producer clientId=...] Received invalid metadata...
+        ts=""; lvl=""; msg=$0;
+        if (match($0, /^\[[0-9\-: ,]+\]/)) {
+          ts=substr($0, RSTART+1, RLENGTH-2);
+        }
+        if (match($0, /(INFO|WARN|ERROR)/)) {
+          lvl=substr($0, RSTART, RLENGTH);
+        }
+        gsub(/\s+/, " ", msg);
+        # Trim long noise
+        if (length(msg) > 140) msg=substr(msg,1,140)"...";
+        printf "%-23s %-5s %s\n", ts, lvl, msg;
+        fflush();
+      }
+    '

@@ -1,41 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOPIC="${TOPIC:-m3-correlation-topic}"
-GROUP="${GROUP:-m3-correlation-cg}"
-LOG="/tmp/ops-demo-consumer.log"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/00-env.sh"
 
-echo "Starting consumer inside broker1 (topic=$TOPIC, group=$GROUP)..."
-echo "Consumer log: $LOG"
+# Make lag visible on purpose: consume slowly.
+# If the producer sends 20k+/sec, a ~100 msg/sec consumer guarantees lag.
+PROCESS_DELAY_SEC="${PROCESS_DELAY_SEC:-0.01}"
 
-# Kill older consumers (best-effort)
+echo "Starting SLOW consumer inside broker1 (topic=$TOPIC, group=$GROUP, delay=${PROCESS_DELAY_SEC}s/msg)..."
+echo "Consumer log: $CONSUMER_LOG"
+
+# If an old demo consumer is running, stop it cleanly.
 docker exec broker1 bash -lc "
-  pkill -f \"kafka-console-consumer.*--group ${GROUP}\" >/dev/null 2>&1 || true
-" >/dev/null || true
+  pkill -f 'kafka-console-consumer.*--group $GROUP' >/dev/null 2>&1 || true
+  rm -f '$CONSUMER_LOG'
+" >/dev/null
 
-# Start consumer detached and create log in the SAME process
+# Start in background INSIDE the container so it survives your terminal.
 docker exec -d broker1 bash -lc "
-  rm -f '${LOG}'; : > '${LOG}';
-  exec env -u JMX_PORT -u KAFKA_JMX_PORT -u KAFKA_JMX_OPTS -u KAFKA_OPTS -u JAVA_TOOL_OPTIONS \
+  set -euo pipefail
+  export KAFKA_OPTS=''
+  (
     kafka-console-consumer \
-      --bootstrap-server broker1:9092 \
-      --topic '${TOPIC}' \
-      --group '${GROUP}' \
-      --from-beginning \
-      --consumer-property enable.auto.commit=true \
-      --consumer-property auto.commit.interval.ms=1000 \
-      --consumer-property auto.offset.reset=earliest \
-      >> '${LOG}' 2>&1
-"
+      --bootstrap-server '$BOOTSTRAP' \
+      --topic '$TOPIC' \
+      --group '$GROUP' \
+      --property print.timestamp=false \
+      --property print.key=false \
+      --property print.headers=false \
+      2>>'$CONSUMER_LOG' \
+    | while IFS= read -r _line; do
+        # simulate slow processing
+        sleep '$PROCESS_DELAY_SEC'
+      done
+  ) >>'$CONSUMER_LOG' 2>&1 &
+  echo \$! > /tmp/ops-demo-consumer.pid
+" >/dev/null
 
-sleep 1
-
-PID_LINE="$(docker exec broker1 bash -lc "pgrep -af kafka-console-consumer | head -n 1 || true")"
-if [[ -n "$PID_LINE" ]]; then
-  echo "✅ Consumer running."
-  exit 0
-fi
-
-echo "❌ Consumer did not stay running. Last log lines:"
-docker exec broker1 bash -lc "tail -n 80 '${LOG}' 2>/dev/null || echo 'NO LOG FILE'"
-exit 1
+echo "✅ Consumer running."
+echo "Tip: tail it with: docker exec broker1 tail -n 20 $CONSUMER_LOG"
