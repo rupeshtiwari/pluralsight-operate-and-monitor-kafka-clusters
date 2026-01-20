@@ -1,25 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$DIR/99-ui.sh"
-source "$DIR/00-env.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/00-env.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/00-env.sh"
+fi
 
-title "Start Producer Load"
+BROKER_CONTAINER="${BROKER_CONTAINER:-broker1}"
+BOOTSTRAP_SERVER="${BOOTSTRAP_SERVER:-broker1:9092}"
+TOPIC_NAME="${TOPIC_NAME:-m3-demo1-lag-topic}"
 
-kv "Topic" "$TOPIC"
-kv "Target rate" "${RECORDS_PER_SEC} records/sec"
-kv "Total" "${TOTAL_RECORDS} records"
-kv "Record size" "${RECORD_SIZE_BYTES} bytes"
+# Demo tuning: 30 batches -> ~30 visible lines
+BATCH_RECORDS="${BATCH_RECORDS:-100000}"   # per batch
+BATCHES="${BATCHES:-30}"                  # 20–40 lines: set 20..40
+THROUGHPUT="${THROUGHPUT:-50000}"         # records/sec
+RECORD_SIZE="${RECORD_SIZE:-512}"         # bytes
 
-info "Running kafka-producer-perf-test (client-side throughput + latency)"
+hr() { printf '%s\n' "────────────────────────────────────────────────────────────────────────────────"; }
 
-# Run in foreground by default for recording clarity
-# The output already includes useful p50/p95/p99-style latency summary in cp-kafka image.
-docker exec "$BROKER_CONTAINER" bash -lc "$KAFKA_ENV_FIX kafka-producer-perf-test \
-  --topic '$TOPIC' \
-  --num-records '$TOTAL_RECORDS' \
-  --record-size '$RECORD_SIZE_BYTES' \
-  --throughput '$RECORDS_PER_SEC' \
-  --producer-props bootstrap.servers='$BOOTSTRAP' acks=all linger.ms=5 batch.size=65536 compression.type=snappy" |
-  sed 's/^/  /'
+echo "Start Producer Load (batched)"
+hr
+echo "Topic:        $TOPIC_NAME"
+echo "Throughput:   ${THROUGHPUT} records/sec"
+echo "Batch size:   ${BATCH_RECORDS} records"
+echo "Batches:      ${BATCHES} (expect ~${BATCHES} lines)"
+echo "Record size:  ${RECORD_SIZE} bytes"
+echo
+
+for i in $(seq 1 "$BATCHES"); do
+  echo "Batch $i/$BATCHES"
+  docker exec "$BROKER_CONTAINER" bash -lc "
+    unset JMX_PORT KAFKA_JMX_OPTS KAFKA_JMX_PORT;
+    kafka-producer-perf-test \
+      --topic '$TOPIC_NAME' \
+      --num-records '$BATCH_RECORDS' \
+      --record-size '$RECORD_SIZE' \
+      --throughput '$THROUGHPUT' \
+      --producer-props bootstrap.servers='$BOOTSTRAP_SERVER' acks=1 linger.ms=5 batch.size=65536
+  " | tail -n 1
+  sleep 1
+done

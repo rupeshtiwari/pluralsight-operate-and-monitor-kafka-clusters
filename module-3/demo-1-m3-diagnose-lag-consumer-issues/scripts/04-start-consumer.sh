@@ -1,29 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$DIR/99-ui.sh"
-source "$DIR/00-env.sh"
-
-LOG="/tmp/m3_demo1_consumer.log"
-
-title "Start Background Consumer"
-
-info "Launching kafka-console-consumer (group=$GROUP)"
-info "Log file: $LOG"
-
-# Start inside broker1 so host networking is consistent.
-# --from-beginning ensures offsets advance even if topic already has data.
-# Redirect to a log to keep recording clean.
-docker exec -d "$BROKER_CONTAINER" bash -lc "$KAFKA_ENV_FIX nohup kafka-console-consumer --bootstrap-server '$BOOTSTRAP' --topic '$TOPIC' --group '$GROUP' --from-beginning --property print.timestamp=true >'$LOG' 2>&1 &"
-
-# Quick visibility
-sleep 1
-if docker exec "$BROKER_CONTAINER" bash -lc "test -f '$LOG'" >/dev/null 2>&1; then
-  ok "Consumer started"
-else
-  warn "Consumer log not found yet"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/00-env.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/00-env.sh"
 fi
 
-info "Tip: tail the consumer log if group rows are missing"
-kv "Tail" "docker exec broker1 bash -lc 'tail -n 20 $LOG'"
+BROKER_CONTAINER="${BROKER_CONTAINER:-broker1}"
+BOOTSTRAP_SERVER="${BOOTSTRAP_SERVER:-broker1:9092}"
+TOPIC_NAME="${TOPIC_NAME:-m3-demo1-lag-topic}"
+GROUP_ID="${GROUP_ID:-m3-demo1-diagnose-group}"
+
+LOG_FILE="${LOG_FILE:-/tmp/m3_demo1_consumer.log}"
+
+hr() { printf '%s\n' "────────────────────────────────────────────────────────────────────────────────"; }
+
+if [[ "${1:-}" == "--prime" ]]; then
+  echo "Prime Consumer Group (create group, then exit)"
+  hr
+  docker exec "$BROKER_CONTAINER" bash -lc "
+    kafka-console-consumer \
+      --bootstrap-server '$BOOTSTRAP_SERVER' \
+      --topic '$TOPIC_NAME' \
+      --group '$GROUP_ID' \
+      --consumer-property enable.auto.commit=true \
+      --consumer-property auto.commit.interval.ms=1000 \
+      --timeout-ms 3000 \
+      --max-messages 1 >/dev/null 2>&1 || true
+  "
+  echo "[OK] Group primed: $GROUP_ID"
+  exit 0
+fi
+
+echo "Start Background Consumer"
+hr
+echo "Launching kafka-console-consumer (group=$GROUP_ID)"
+echo "Log file: $LOG_FILE"
+
+docker exec -d "$BROKER_CONTAINER" bash -lc "
+  nohup kafka-console-consumer \
+    --bootstrap-server '$BOOTSTRAP_SERVER' \
+    --topic '$TOPIC_NAME' \
+    --group '$GROUP_ID' \
+    --consumer-property enable.auto.commit=true \
+    --consumer-property auto.commit.interval.ms=1000 \
+    --property print.key=false \
+    --property print.value=false \
+    > '$LOG_FILE' 2>&1 &
+  disown
+"
+
+echo "[OK] Consumer started"
+echo "Tip: tail the consumer log if needed"
+echo "Tail: docker exec $BROKER_CONTAINER bash -lc 'tail -n 20 $LOG_FILE'"

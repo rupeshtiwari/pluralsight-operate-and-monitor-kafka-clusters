@@ -1,0 +1,73 @@
+{
+    "title": "Kafka Operational Health",
+    "uid": "kafka-ops",
+    "schemaVersion": 38,
+    "version": 2,
+    "refresh": "5s",
+    "panels": [
+        {
+            "type": "timeseries",
+            "title": "Consumer Group Lag",
+            "targets": [
+                {
+                    "expr": "max by (consumergroup, topic) (kafka_consumergroup_lag{consumergroup=\"m3-correlation-cg\", topic=\"m3-correlation-topic\"})",
+                    "legendFormat": "{{consumergroup}} / {{topic}}"
+                }
+            ],
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Under Replicated Partitions",
+            "targets": [
+                {
+                    "expr": "sum(kafka_under_replicated_partitions{job=\"kafka-jmx\"})",
+                    "legendFormat": "Cluster URP"
+                }
+            ],
+            "gridPos": {
+                "x": 12,
+                "y": 0,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Broker Throughput (Bytes In)",
+            "targets": [
+                {
+                    "expr": "sum by (instance) (rate(kafka_bytes_in_total{job=\"kafka-jmx\"}[1m]))",
+                    "legendFormat": "Broker {{instance}}"
+                }
+            ],
+            "gridPos": {
+                "x": 0,
+                "y": 8,
+                "w": 12,
+                "h": 8
+            }
+        },
+        {
+            "type": "timeseries",
+            "title": "Request Latency (Total Time p99)",
+            "targets": [
+                {
+                    "expr": "max by (request) (kafka_request_total_time_ms_p99{job=\"kafka-jmx\", request=~\"Produce|FetchConsumer|Metadata\"})",
+                    "legendFormat": "{{request}}"
+                }
+            ],
+            "gridPos": {
+                "x": 12,
+                "y": 8,
+                "w": 12,
+                "h": 8
+            }
+        }
+    ]
+}

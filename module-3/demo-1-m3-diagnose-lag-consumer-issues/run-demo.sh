@@ -1,55 +1,114 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
+export COMPOSE_PROJECT_NAME=demo-1-m3-diagnose-lag-consumer-issues
+export COMPOSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
 
-# Bring the environment to a known-good baseline
-./scripts/01-prepare-state.sh
-./scripts/02-ensure-topic-ready.sh
+# Avoid accidental overrides (common cause of weird DNS / "no such host")
+unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROFILES
 
-echo
-echo "Next: tmux layout (recommended)"
-echo "- Observe window: run ./scripts/05-watch-lag.sh in the large pane"
-echo "- Actions window: run ./scripts/03-start-load.sh and ./scripts/04-start-consumer.sh"
-echo
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
 
-# If tmux is available, open an asymmetric layout to keep focus on the main signal
-if command -v tmux >/dev/null 2>&1; then
-  # Do not nest tmux sessions
-  if [ -n "${TMUX-}" ]; then
-    echo "Already inside tmux. Skipping tmux setup."
-    exit 0
+session="m3-demo1"
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1"; exit 1; }; }
+need docker
+need tmux
+
+hr() { printf '%s\n' "────────────────────────────────────────────────────────────────────────────────"; }
+title() { printf '\n%s\n' "$1"; hr; }
+
+if [[ "${1:-}" == "--down" ]]; then
+  tmux kill-session -t "$session" 2>/dev/null || true
+  docker compose down -v --remove-orphans || true
+  exit 0
+fi
+
+title "Start Kafka Demo Environment"
+echo "Bringing up Docker Compose services"
+docker compose up -d --force-recreate --remove-orphans
+
+echo "Waiting for broker healthchecks"
+for b in broker1 broker2 broker3; do
+  printf -- "- %s: " "$b"
+  ok="no"
+  for _ in $(seq 1 45); do
+    status="$(docker inspect -f '{{.State.Health.Status}}' "$b" 2>/dev/null || true)"
+    if [[ "$status" == "healthy" ]]; then
+      ok="yes"
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ok" == "yes" ]]; then
+    echo "[OK] healthy"
+  else
+    echo "[ERR] not healthy"
+    echo "Tip: run ./stop-demo.sh and try again"
+    exit 1
   fi
+done
+echo "[OK] Kafka brokers are ready"
 
-  SESSION="m3-demo1"
+# Ensure topic exists (your existing script)
+"$ROOT_DIR/scripts/02-ensure-topic-ready.sh"
 
-  # Clean previous session if it exists
-  tmux has-session -t "$SESSION" 2>/dev/null && tmux kill-session -t "$SESSION"
+echo
+echo "tmux panes:"
+echo "  T1: Lag view"
+echo "  T2: Consumer state"
+echo "  T3: Start load"
+echo "  T4: Start consumer"
+echo
 
-  # Window 1: observe (big focus pane + two small proof panes)
-  tmux new-session -d -s "$SESSION" -n observe -c "$(pwd)"
-  tmux send-keys -t "$SESSION:observe.0" "clear; echo '[FOCUS] Run: ./scripts/05-watch-lag.sh'; echo 'Then: ./scripts/06-show-consumer-state.sh (when lag appears)';" C-m
+# Fresh tmux
+tmux has-session -t "$session" 2>/dev/null && tmux kill-session -t "$session" || true
 
-  # Split right, make it narrow
-  tmux split-window -h -t "$SESSION:observe.0" -c "$(pwd)"
-  tmux send-keys -t "$SESSION:observe.1" "clear; echo '[PROOF] Run: ./scripts/07-watch-broker-load.sh';" C-m
+# Titles (static, colored)
+t1_title="#[bg=colour27,fg=white,bold]   T1 - Lag View               #[default]"
+t2_title="#[bg=colour198,fg=white,bold]  T2 - Consumer State         #[default]"
+t3_title="#[bg=colour46,fg=black,bold]   T3 - Producer Load          #[default]"
+t4_title="#[bg=colour226,fg=black,bold]  T4 - Start Consumer         #[default]"
 
-  # Split bottom on the right for optional extra signal
-  tmux split-window -v -t "$SESSION:observe.1" -c "$(pwd)"
-  tmux send-keys -t "$SESSION:observe.2" "clear; echo '[OPTIONAL] Keep this pane idle, or use it for extra checks';" C-m
+# Clean shell without your zsh prompt theme noise
+run_clean() {
+  # PS1 shows "$ " (escaped so it is not expanded by the outer script)
+  printf "%s" "cd '$ROOT_DIR'; clear; env PS1='\$ ' bash --noprofile --norc"
+}
 
-  # Select the big focus pane
-  tmux select-pane -t "$SESSION:observe.0"
+# Create session + 2x2 panes (deterministic)
+tmux new-session -d -s "$session" -n "demo" -c "$ROOT_DIR" "$(run_clean)"
+tmux split-window -h -t "$session":0 -c "$ROOT_DIR" "$(run_clean)"
+tmux split-window -v -t "$session":0.0 -c "$ROOT_DIR" "$(run_clean)"
+tmux split-window -v -t "$session":0.1 -c "$ROOT_DIR" "$(run_clean)"
+tmux select-layout -t "$session":0 tiled
 
-  # Window 2: actions (two panes for one-time commands)
-  tmux new-window -t "$SESSION" -n actions -c "$(pwd)"
-  tmux send-keys -t "$SESSION:actions.0" "clear; echo '[LOAD] Run: ./scripts/03-start-load.sh';" C-m
-  tmux split-window -v -t "$SESSION:actions.0" -c "$(pwd)"
-  tmux send-keys -t "$SESSION:actions.1" "clear; echo '[CONSUMER] Run: ./scripts/04-start-consumer.sh';" C-m
+# Window settings: show pane titles on top line
+tmux set-option -t "$session":0 -w pane-border-status top
+tmux set-option -t "$session":0 -w pane-border-format "#{pane_title}"
 
-  # Start in observe window
-  tmux select-window -t "$SESSION:observe"
-  tmux attach -t "$SESSION"
+# Borders always white (shared cross stays white)
+tmux set-option -t "$session":0 -w pane-border-style "fg=white"
+tmux set-option -t "$session":0 -w pane-active-border-style "fg=white"
+
+# Apply titles to panes (these render because pane-border-format uses #{pane_title})
+tmux select-pane -t "$session":0.0 -T "$t1_title"
+tmux select-pane -t "$session":0.1 -T "$t2_title"
+tmux select-pane -t "$session":0.2 -T "$t3_title"
+tmux select-pane -t "$session":0.3 -T "$t4_title"
+
+# Optional run hints inside panes
+tmux send-keys -t "$session":0.0 "clear; printf '\nRun: ./scripts/05-watch-lag.sh\n\n'" Enter
+tmux send-keys -t "$session":0.1 "clear; printf '\nRun: ./scripts/06-show-consumer-state.sh\n\n'" Enter
+tmux send-keys -t "$session":0.2 "clear; printf '\nRun: ./scripts/03-start-load.sh\n\n'" Enter
+tmux send-keys -t "$session":0.3 "clear; printf '\nRun: ./scripts/04-start-consumer.sh\n\n'" Enter
+
+tmux select-pane -t "$session":0.0
+
+# Attach or switch depending on where we are
+if [[ -n "${TMUX:-}" ]]; then
+  tmux switch-client -t "$session"
 else
-  echo "tmux is not installed. Continue in separate terminals using the commands above."
+  tmux attach-session -t "$session"
 fi
