@@ -2,52 +2,53 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
 source "$DIR/00-env.sh"
 
-# Opinionated defaults so you can run: ./scripts/02-start-load.sh
-# (You *can* override, but you don't have to.)
-DURATION_SEC="${DURATION_SEC:-240}"
-TARGET_RPS="${TARGET_RPS:-25000}"
-WINDOW_SEC="${WINDOW_SEC:-5}"
+# Producer Load Generator
+
+DURATION_SEC="${DURATION_SEC:-150}"
+TARGET_RPS="${TARGET_RPS:-50000}"
 RECORD_SIZE="${RECORD_SIZE:-200}"
+WINDOW_SEC="${WINDOW_SEC:-5}"
 
-# How many records per perf-test run (gives you one clean status line every WINDOW_SEC)
-CHUNK_RECORDS=$(( TARGET_RPS * WINDOW_SEC ))
+BOLD=$'\033[1m'; RESET=$'\033[0m'; DIM=$'\033[2m'
+CYAN=$'\033[36m'; GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'
 
-printf "Starting producer load (topic=%s, duration=%ss, target≈%s rps)\n" "$TOPIC" "$DURATION_SEC" "$TARGET_RPS"
-printf "Expected in Grafana: Throughput rises, p99 stays low until the incident.\n"
+hr() { printf '%s\n' "--------------------------------------------------------------------------------"; }
 
-end=$(( $(date +%s) + DURATION_SEC ))
+WARN_LOG="/tmp/ops-demo-producer.warn"
+WINDOWS=$(( DURATION_SEC / WINDOW_SEC ))
+[[ $WINDOWS -lt 1 ]] && WINDOWS=1
 
-# Keep running even if one batch fails during leader churn
-set +e
+printf "%b\n" "${CYAN}${BOLD}🚀 Start Producer Load${RESET}"
+hr
+printf "📌 Topic:      %s\n" "$TOPIC"
+printf "🛰️ Bootstrap:  %s\n" "$BOOTSTRAP"
+printf "🎯 Target:     ${GREEN}${BOLD}~${TARGET_RPS} msg/s${RESET}"
+printf "\n⏱️ Duration:   ~${DURATION_SEC}s (${WINDOWS} windows of ${WINDOW_SEC}s)"
+printf "\n🪵 Warn log:   ${DIM}%s${RESET}\n" "$WARN_LOG"
+hr
 
-while (( $(date +%s) < end )); do
-  out=$(docker exec broker1 bash -lc "
-    env -u JMX_PORT -u KAFKA_JMX_PORT -u KAFKA_JMX_OPTS -u KAFKA_OPTS -u JAVA_TOOL_OPTIONS \
+for i in $(seq 1 "$WINDOWS"); do
+  window_records=$(( TARGET_RPS * WINDOW_SEC ))
+
+  printf "\n📦 Window ${i}/${WINDOWS}  ${DIM}start=$(date +%T)${RESET}\n"
+
+  docker exec "$BROKER_CONTAINER" bash -c "
+    set -euo pipefail
+    env -u JMX_PORT -u KAFKA_JMX_PORT -u KAFKA_JMX_OPTS -u JAVA_TOOL_OPTIONS -u KAFKA_OPTS \
       kafka-producer-perf-test \
         --topic '$TOPIC' \
-        --num-records $CHUNK_RECORDS \
-        --record-size $RECORD_SIZE \
-        --throughput $TARGET_RPS \
-        --producer-props bootstrap.servers='$BOOTSTRAP' acks=1 linger.ms=5 batch.size=65536 2>&1
-  ")
-  ec=$?
-
-  # Print only the most useful line for the video
-  last_line=$(printf "%s\n" "$out" | tail -n 1)
-  if [[ -n "$last_line" ]]; then
-    echo "$last_line"
-  else
-    echo "(producer-perf-test ran, but produced no summary line)"
-  fi
-
-  if [[ $ec -ne 0 ]]; then
-    # During broker restart you may see NOT_LEADER_OR_FOLLOWER or timeouts.
-    # That's actually *good* teaching signal. Keep going.
-    echo "WARN: producer batch exited $ec (continuing...)" 1>&2
-  fi
-
+        --num-records '$window_records' \
+        --record-size '$RECORD_SIZE' \
+        --throughput '$TARGET_RPS' \
+        --producer-props bootstrap.servers='$BOOTSTRAP' acks=1 linger.ms=5 batch.size=65536 request.timeout.ms=3000 delivery.timeout.ms=5000 max.block.ms=3000 \
+      2>>'$WARN_LOG' | grep -E 'records sent|MB/sec|avg latency|99th' | tail -n 1
+  " || {
+    echo -e "${RED}[producer] ❌ window failed. Check: docker exec $BROKER_CONTAINER tail -n 20 $WARN_LOG${RESET}"
+    exit 1
+  }
 done
 
-echo "✅ Load finished (~${DURATION_SEC}s)."
+printf "%b\n" "\n${GREEN}${BOLD}[OK] ✅ Producer load complete${RESET}"

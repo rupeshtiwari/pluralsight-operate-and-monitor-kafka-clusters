@@ -2,14 +2,8 @@
 set -euo pipefail
 
 # Shared demo constants (override via environment if you really need to)
-#
-# IMPORTANT:
-# Most scripts run Kafka CLI via: docker exec broker1 ...
-# Therefore bootstrap must be reachable *from inside Docker network*.
-# Use broker1:9092 (Docker DNS), NOT localhost:19092.
 
 BOOTSTRAP="${BOOTSTRAP:-broker1:9092}"
-
 TOPIC="${TOPIC:-m3-correlation-topic}"
 GROUP="${GROUP:-m3-correlation-cg}"
 
@@ -21,6 +15,5 @@ SLOW_CONSUMER_DELAY_SEC="${SLOW_CONSUMER_DELAY_SEC:-0.02}"
 
 # Where we write the slow-consumer log inside broker1
 CONSUMER_LOG="${CONSUMER_LOG:-/tmp/ops-demo-consumer.log}"
-CONSUMER_PID="${CONSUMER_PID:-/tmp/ops-demo-consumer.pid}"
 
-export BOOTSTRAP TOPIC GROUP BROKER_CONTAINER SLOW_CONSUMER_DELAY_SEC CONSUMER_LOG CONSUMER_PID
+export BOOTSTRAP TOPIC GROUP BROKER_CONTAINER SLOW_CONSUMER_DELAY_SEC CONSUMER_LOG

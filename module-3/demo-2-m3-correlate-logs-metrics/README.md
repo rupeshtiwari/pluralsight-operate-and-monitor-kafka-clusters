@@ -1,264 +1,185 @@
-````markdown
-# Demo 2 (Module 3) — Correlate Logs with Metrics
+# Demo-2 | Module 3🧪 Kafka Demo: Lag, Broker Restart, and Observability
 
-This demo reuses the same observability stack (JMX Exporter → Prometheus → Grafana + Kafka Exporter) but shifts the goal from “build dashboards” to “prove causality.” You will trigger a controlled broker event, line it up with metric changes, then validate the root cause in broker logs.
-
-## What this demo teaches
-- How Kafka broker metrics flow from **JMX → Prometheus → Grafana**
-- How to correlate **Throughput → Latency → Lag** (cause → early warning → symptom)
-- How to validate dashboard signals using **Prometheus** as the source of truth
-- Where alert rules live (Grafana) and which signals are page-worthy
+> 🎯 **Goal**: Demonstrate how Kafka handles broker failure, how lag builds up under pressure, and how logs/metrics help us debug.
+> 🧠 You’ll learn: Lag mechanics, ISR changes, controller elections, log-metric correlation, and real-world recovery patterns.
 
 ---
 
-## Prerequisites
-- Docker + Docker Compose
-- Ports available on your machine:
-  - Grafana: `3000`
-  - Prometheus: `9090`
-  - Kafka brokers: `19092`, `29092`, `39092` (mapped)
-  - JMX exporter ports: `5556`, `5557`, `5558`
-  - Kafka exporter: `9308`
+## 🔧 Prerequisites
+
+Make sure the following are installed:
+
+* Docker & Docker Compose
+* `bash`, `tmux`, and basic Linux tools
+* No prior Zookeeper/Kafka setup required — demo is self-contained
 
 ---
 
-## Quick Start (Recommended Flow)
-Run these steps exactly in order for the cleanest demo outcome.
+## 📁 Folder Structure
 
-### 1) Reset and start the environment
-From the demo folder:
-```bash
-./stop-demo.sh && ./run-demo.sh
-````
-
-Wait **60–90 seconds** for:
-
-* Kafka brokers to start
-* JMX exporters to attach and expose metrics
-* Prometheus to begin scraping
-* Grafana to provision data sources + dashboards
+| File / Script                              | Purpose                                  |
+| ------------------------------------------ | ---------------------------------------- |
+| `run-demo.sh`                              | Starts or stops the full environment     |
+| `scripts/01-create-topic.sh`               | Creates a test topic                     |
+| `scripts/02-start-load.sh`                 | Starts producer load                     |
+| `scripts/03-start-consumer.sh`             | Starts the (intentionally) slow consumer |
+| `scripts/06-watch-broker2-events.sh`       | Live logs of broker2, filtered           |
+| `scripts/10-watch-lag.sh`                  | Shows consumer group lag live            |
+| `scripts/09-restart-broker2.sh`            | Simulates broker2 failure                |
+| `scripts/14-reset-and-restart-consumer.sh` | Recovery script after incident           |
 
 ---
 
-## Open the UIs
+## ✅ STEP-BY-STEP: Full Demo Flow (~5 minutes)
 
-### Grafana
-
-* URL: [http://localhost:3000](http://localhost:3000)
-* Login: `admin / admin`
-* Dashboard: **Kafka Operational Health**
-
-### Prometheus
-
-* URL: [http://localhost:9090](http://localhost:9090)
-* Helpful page: **Status → Targets**
-
-  * Confirm these are **UP**:
-
-    * `kafka-exporter`
-    * `jmx-exporter-broker1`
-    * `jmx-exporter-broker2`
-    * `jmx-exporter-broker3`
-
-> If Targets are DOWN, Grafana may show “No data.” Fix scraping first.
+> ⏱️ Time-sensitive demo — no idle screen >10s
+> 🎥 You’ll use 3 terminal panes via `tmux`:
+>
+> * T1 = Broker logs
+> * T2 = Control + Lag watcher
+> * T3 = Producer load
 
 ---
 
-## Demo Actions (Terminal)
-
-For this Module 3 demo, you will keep Grafana on screen and use the terminal only for two things:
-- Trigger a clear signal change (load or broker restart)
-- Prove causality by matching the Grafana timestamp to broker logs
-
-### 0) Start log tail (leave it running)
+### 🔄 Step 0: Reset Everything (Clean Start)
 
 ```bash
-./scripts/08-tail-broker2-logs.sh
+./run-demo.sh --down
+./run-demo.sh
 ```
 
-### Optional: inject a clean failure for correlation
+⏱️ Wait 10–15 seconds → tmux auto-opens
+🖼️ Ensure all 3 panes are visible
+
+---
+
+### 🧩 T1 (TOP) — Broker Logs
 
 ```bash
-./scripts/09-restart-broker2.sh
+./scripts/06-watch-broker2-events.sh
 ```
 
+🧠 This shows key events from broker2: controller activity, ISR changes, resignations, etc.
+✅ Let it run throughout.
 
-Use the scripts in `scripts/` so the demo stays repeatable.
+---
 
-### 2) Create the topic
-
-```bash
-./scripts/01-create-topic.sh
-```
-
-Expected: topic `m3-correlation-topic` created.
-
-### 3) Start the consumer group
-
-```bash
-./scripts/03-start-consumer.sh
-```
-
-This starts a consumer in group `m3-correlation-cg` reading from `m3-correlation-topic`.
-
-### 4) Start producer load
+### 🚀 T3 (RIGHT) — Start Producer Load
 
 ```bash
 ./scripts/02-start-load.sh
 ```
 
-This produces load at roughly **~20k records/sec** (~9–10 MB/sec). Keep it running for **45–60 seconds**.
+📈 Expect live output like:
 
-### 5) Inject a controlled broker event (for correlation)
+```
+49995 records sent, avg latency: 6.2ms, 99th percentile: 10.4ms
+```
+
+✅ This runs for ~5 minutes in short windows
+💡 **Tip**: Throughput stays stable even during broker failure
+
+---
+
+### 🛠️ T2 (BOTTOM LEFT) — Setup + Lag Watcher
+
+1. **Create Topic**
+
+   ```bash
+   ./scripts/01-create-topic.sh
+   ```
+
+2. **Start Slow Consumer**
+
+   ```bash
+   ./scripts/03-start-consumer.sh
+   ```
+
+   ⏱️ Lag will be near 0 — for now.
+
+3. **Start Lag Watcher**
+
+   ```bash
+   ./scripts/10-watch-lag.sh
+   ```
+
+   🧠 Watch `LAG` column for each partition
+   ✅ This will spike later when broker fails
+
+---
+
+### 📊 GRAFANA — Open Dashboard
+
+1. Go to: [http://localhost:3000](http://localhost:3000)
+2. Login: `admin` / `admin`
+3. Set:
+
+   * **Time Range**: Last 5 minutes
+   * **Auto Refresh**: 5s
+
+🎯 Baseline:
+
+* p99 latency should be low
+* Consumer lag near 0
+* Throughput steady
+
+---
+
+### 💥 Step 5: Simulate Failure
+
 ```bash
 ./scripts/09-restart-broker2.sh
 ```
-In Grafana, note the exact time the dip starts. In the log tail, read the matching restart/leader/ISR lines.
 
-### 6) Check lag (CLI snapshot)
+📉 This simulates a broker crash
+✅ Watch for log events like `Resigned`, `LeaderAndIsr`, `ControllerMovedException`
+
+---
+
+### 🔍 Observe Lag & Logs
+
+* **T1 logs**: Will show resigns, elections, ISR shrink
+* **T2 lag**: Will explode — thousands to millions
+* **Grafana**:
+
+  * p99 latency will jump
+  * Consumer lag line spikes
+  * (URP may temporarily increase)
+
+---
+
+### 🔁 Step 6: Recovery
 
 ```bash
-./scripts/04-check-lag.sh
+./scripts/14-reset-and-restart-consumer.sh
 ```
 
-Run it a couple times during load to see lag rise/fall:
-
-```bash
-./scripts/04-check-lag.sh
-sleep 5
-./scripts/04-check-lag.sh
-```
+✅ This kills old consumer, clears port conflicts, starts fresh one
+🎯 Intended to demonstrate Kafka’s ability to recover
 
 ---
 
-## What to observe in Grafana (Operational Story)
+### 🧠 Final Observations
 
-Open **Kafka Operational Health** dashboard and set:
-
-* Time range: **Last 15 minutes**
-* Refresh: **5s**
-
-You should see these behaviors under load:
-
-### Panel: Broker Throughput (Bytes In)
-
-* Ramps up and plateaus
-* Confirms traffic is reaching brokers
-* Plateau + rising latency indicates pressure (not necessarily failure)
-
-### Panel: Request Latency (Total Time p99)
-
-* `FetchConsumer` p99 rises first (often near ~500ms during peak)
-* `Produce` stays low (often <10ms), `Metadata` low (~20ms)
-* p99 is an early warning signal before lag alarms
-
-### Panel: Consumer Group Lag
-
-* Lag increases after throughput and latency change
-* Lag later drains when consumers catch up
-* Lag is the symptom; throughput/latency are the earlier signals
-
-### Panel: Under Replicated Partitions
-
-* Should remain **0** in this demo
-* Any sustained value **>0** is durability risk and is page-worthy
+* **Producer stays strong**: Even under chaos, producer never stopped — kept ~49.9K msg/5s
+* **Lag may stay elevated**: In real systems, recovery may take time, and that’s realistic
+* **Metrics > Logs Alone**: Only by combining log events + metrics did we see the big picture
 
 ---
 
-## Prometheus Validation (Source of Truth)
+## 📌 What You Learned
 
-Prometheus confirms the raw metrics behind the Grafana panels.
-
-Open [http://localhost:9090](http://localhost:9090) and run:
-
-### Consumer lag (graph it)
-
-```promql
-max by (consumergroup, topic) (
-  kafka_consumergroup_lag{consumergroup="m3-correlation-cg", topic="m3-correlation-topic"}
-)
-```
-
-Tip: if the instant value shows `0`, switch to **Graph** and use a time range that includes the load window.
-
-### Broker ingress rate
-
-```promql
-sum by (instance) (rate(kafka_bytes_in_total{job="kafka-jmx"}[1m]))
-```
-
-### Request latency p99
-
-```promql
-max by (request) (
-  kafka_request_total_time_ms_p99{job="kafka-jmx", request=~"Produce|FetchConsumer|Metadata"}
-)
-```
-
-### Under replicated partitions
-
-```promql
-sum(kafka_under_replicated_partitions{job="kafka-jmx"})
-```
+✅ Lag spikes during instability
+✅ Broker restarts → ISR shrink → Controller re-election
+✅ p99 latency is a **tail signal**
+✅ Kafka buffers producers — consumer slowdown = lag
+✅ Resetting consumer helps simulate real-world recovery
+✅ This is not just a demo — it’s incident muscle-memory training
 
 ---
 
-## Alerting Guidance (What to alert on)
+## 📎 Tips
 
-Grafana is where alert rules live (Alerting UI or provisioned rules).
-
-Recommended operational signals:
-
-* **Warning**: sustained `FetchConsumer` p99 elevated (e.g., ~500ms for minutes)
-* **Alert**: lag is high and **not draining** over time
-* **Page**: under-replicated partitions **>0** sustained
-
----
-
-## Troubleshooting
-
-### Grafana shows “No data”
-
-1. Prometheus → **Status → Targets** must show exporters **UP**
-2. In Prometheus, confirm metrics exist:
-
-   * `kafka_under_replicated_partitions`
-   * `kafka_bytes_in_total`
-   * `kafka_request_total_time_ms_p99`
-3. Ensure dashboard queries match metric names (this repo uses the new names above).
-
-### Lag is always 0
-
-* Consumer may be keeping up.
-* Keep producer load running longer (45–60s).
-* Check Prometheus **Graph history** (lag may have spiked earlier then recovered).
-* Verify kafka-exporter is filtering the correct names:
-
-  * group: `m3-correlation-cg`
-  * topic: `m3-correlation-topic`
-
----
-
-## Stop / Cleanup
-
-```bash
-./stop-demo.sh
-```
-
----
-
-## Useful Reference
-
-* Grafana: [http://localhost:3000](http://localhost:3000) (admin/admin)
-* Prometheus: [http://localhost:9090](http://localhost:9090)
-* Kafka exporters:
-
-  * Kafka exporter: `:9308/metrics`
-  * JMX exporters:
-
-    * broker1: `:5556/metrics`
-    * broker2: `:5557/metrics`
-    * broker3: `:5558/metrics`
-
-```
-```
+* Use `watch-lag.sh` like a radar: fast refresh, low clutter
+* Scan for **controller epoch changes** in logs — sign of broker elections
+* p99 is the alert trigger — track it before ops tickets track you

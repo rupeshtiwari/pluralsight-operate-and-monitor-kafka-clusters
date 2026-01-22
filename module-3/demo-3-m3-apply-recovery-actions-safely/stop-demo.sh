@@ -9,6 +9,4 @@ SESSION="m3-demo2"
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
-echo "Stopping containers..."
-docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" down -v --remove-orphans || true
-echo "[OK] Demo stopped."
+docker compose down -v --remove-orphans || true

@@ -1,33 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# High-signal broker2 log view for correlation with Grafana timestamps.
-# Keep this running BEFORE you trigger the incident (broker2 restart).
+# Highlighted Broker2 logs with full line width and colored levels
+FILTER_RE='Controlled shutdown|Starting|Started|Registered broker|Resigned|kafka\.controller|Controller|LeaderAndIsr|UpdateMetadata|ReplicaFetcher|GroupCoordinator|Rebalance|ISR|UnderReplicated|ControllerMovedException|ERROR|WARN'
 
-FILTER_RE='Resigned|Controlled shutdown request|Registered broker|Starting|Started|kafka\.controller|LeaderAndIsr|become-(leader|follower)|ERROR|WARN'
+# Colors
+BOLD=$'\033[1m'; RESET=$'\033[0m'; DIM=$'\033[2m'
+GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; CYAN=$'\033[36m'
 
-printf "\nBroker2 high-signal events (Ctrl+C to stop)\n"
-printf "Filter: %s\n\n" "$FILTER_RE"
-printf "%-23s %-5s %s\n" "TIME" "LVL" "EVENT"
-printf "%-23s %-5s %s\n" "-----------------------" "-----" "-----------------------------------------------"
+printf "\n${CYAN}${BOLD}Broker2 High-Signal Logs${RESET} ${DIM}(Ctrl+C to stop)${RESET}\n"
+printf "Filter: ${DIM}${FILTER_RE}${RESET}\n\n"
+printf "${BOLD}%-23s %-7s %s${RESET}\n" "TIME" "LEVEL" "EVENT"
+printf "%-23s %-7s %s\n" "-----------------------" "-------" "-------------------------------------------------------------"
 
 docker logs -f broker2 2>&1 \
-  | egrep -i "$FILTER_RE" \
-  | awk '
+  | grep -Ei "$FILTER_RE" \
+  | awk -v BOLD="$BOLD" -v RESET="$RESET" -v RED="$RED" -v YELLOW="$YELLOW" -v GREEN="$GREEN" '
       {
-        # Typical format:
-        # [2026-01-20 08:15:51,751] WARN [Producer clientId=...] Received invalid metadata...
-        ts=""; lvl=""; msg=$0;
-        if (match($0, /^\[[0-9\-: ,]+\]/)) {
-          ts=substr($0, RSTART+1, RLENGTH-2);
+        ts = ""; lvl = ""; msg = $0
+
+        # Extract timestamp
+        if ($1 ~ /^\[[0-9]{4}-[0-9]{2}-[0-9]{2}/) {
+          ts = substr($1, 2, length($1) - 2)
+          msg = substr($0, index($0, $3))
         }
-        if (match($0, /(INFO|WARN|ERROR)/)) {
-          lvl=substr($0, RSTART, RLENGTH);
-        }
-        gsub(/\s+/, " ", msg);
-        # Trim long noise
-        if (length(msg) > 140) msg=substr(msg,1,140)"...";
-        printf "%-23s %-5s %s\n", ts, lvl, msg;
-        fflush();
+
+        # Detect level
+        if (msg ~ /INFO/) lvl = "INFO"
+        else if (msg ~ /WARN/) lvl = "WARN"
+        else if (msg ~ /ERROR/) lvl = "ERROR"
+        else lvl = "INFO"
+
+        # Color
+        color = (lvl == "ERROR") ? RED : ((lvl == "WARN") ? YELLOW : GREEN)
+
+        printf "%s%-23s%s %s%-7s%s %s\n", BOLD, ts, RESET, color, lvl, RESET, msg
+        fflush()
       }
-    '
+  '

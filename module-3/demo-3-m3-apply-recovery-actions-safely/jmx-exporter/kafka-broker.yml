@@ -1,0 +1,25 @@
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  # Request handler idle %
+  - pattern: 'kafka.server<type=KafkaRequestHandlerPool, name=RequestHandlerAvgIdlePercent><>Value'
+    name: kafka_requesthandler_idle_percent
+    type: GAUGE
+
+  # Request queue size
+  - pattern: 'kafka.network<type=RequestMetrics, name=RequestQueueSize><>Value'
+    name: kafka_request_queue_size
+    type: GAUGE
+
+  # Bytes in/out (throughput)
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec><>Count'
+    name: kafka_bytes_in_total
+    type: COUNTER
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec><>Count'
+    name: kafka_bytes_out_total
+    type: COUNTER
+
+  # Under-replicated partitions (ISR signal)
+  - pattern: 'kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value'
+    name: kafka_under_replicated_partitions
+    type: GAUGE
