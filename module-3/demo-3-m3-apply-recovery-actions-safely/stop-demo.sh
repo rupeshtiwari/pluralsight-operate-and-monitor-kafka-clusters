@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export COMPOSE_PROJECT_NAME=ps-kafka-m3-demo2
-export COMPOSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker-compose.yml"
-unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROFILES
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
 
-SESSION="m3-demo2"
+export COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-m3_demo3}"
 
-tmux kill-session -t "$SESSION" 2>/dev/null || true
+session="m3-demo3"
 
+tmux kill-session -t "$session" 2>/dev/null || true
 docker compose down -v --remove-orphans || true
+
+for c in zookeeper broker1 broker2 broker3 kafka-exporter prometheus grafana; do
+  docker rm -f "$c" >/dev/null 2>&1 || true
+done
+
+echo "✅ Demo stopped."

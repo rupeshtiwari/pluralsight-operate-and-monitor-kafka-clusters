@@ -5,8 +5,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/00-env.sh"
 
 REFRESH_SEC="${REFRESH_SEC:-2}"
-LOG="${CONSUMER_LOG:-/tmp/ops-demo-consumer.log}"
 
+# ANSI styles
 BOLD="\033[1m"; RESET="\033[0m"; DIM="\033[2m"
 GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"
 
@@ -18,7 +18,10 @@ trap show_cursor EXIT
 fetch() {
   docker exec broker1 bash -lc "
     env -u JMX_PORT -u KAFKA_JMX_PORT -u KAFKA_JMX_OPTS -u KAFKA_OPTS -u JAVA_TOOL_OPTIONS \
-      kafka-consumer-groups --bootstrap-server '$BOOTSTRAP' --group '$GROUP' --describe 2>&1 || true
+      kafka-consumer-groups \
+        --bootstrap-server '$BOOTSTRAP_SERVERS' \
+        --group '$GROUP_ID' \
+        --describe 2>/dev/null || true
   "
 }
 
@@ -26,44 +29,47 @@ render() {
   local raw rows
   raw="$(fetch)"
 
-  printf "\033[H\033[J"   # Clear screen
+  printf "\033[H\033[J"
   echo
-  echo -e "${CYAN}${BOLD}🔍 Lag + ISR Snapshot${RESET} ${DIM}(group=$GROUP topic=$TOPIC refresh=${REFRESH_SEC}s)${RESET}"
+  echo -e "${CYAN}${BOLD}🔍 Consumer Lag View${RESET} ${DIM}(group=$GROUP_ID refresh=${REFRESH_SEC}s)${RESET}"
   hr
-  printf "${BOLD}%-20s %-8s %-12s %-12s %-8s${RESET}\n" "TOPIC" "PART" "CURR" "LOG_END" "LAG 🐢"
+  printf "${BOLD}%-22s %-6s %-12s %-12s %-8s${RESET}\n" "TOPIC" "PART" "CURRENT" "LOG_END" "LAG"
   hr
 
   if echo "$raw" | grep -qiE "not found|does not exist"; then
-    echo -e "${YELLOW}${BOLD}⚠️  Consumer group not found yet.${RESET}"
-    echo -e "${DIM}💡 Hint:${RESET} Run: ./scripts/03-start-consumer.sh"
+    echo -e "${YELLOW}${BOLD}⚠️  Consumer group not found.${RESET}"
+    echo -e "${DIM}💡 Start consumer:${RESET} ./scripts/03-start-consumer.sh"
     hr
-    return 0
+    return
   fi
 
-  rows="$(echo "$raw" | awk -v g="$GROUP" -v t="$TOPIC" '$1==g && $2==t && $3 ~ /^[0-9]+$/ { print $2, $3, $4, $5, $6 }')"
+  rows="$(echo "$raw" | awk '
+    NR>1 && $6 ~ /^[0-9]+$/ {
+      printf "%s %s %s %s %s\n", $2, $3, $4, $5, $6
+    }
+  ')"
 
   if [[ -z "${rows// /}" ]]; then
-    echo -e "${YELLOW}${BOLD}⚠️  No offset rows yet.${RESET}"
-    echo -e "${DIM}💡 Hint:${RESET} docker exec broker1 bash -lc \"tail -n 20 '$LOG'\""
+    echo -e "${YELLOW}${BOLD}⚠️  No lag data yet.${RESET}"
     hr
-    return 0
+    return
   fi
 
   echo "$rows" | while read -r topic part cur end lag; do
-    lag_color="$DIM"
-    if [[ "$lag" =~ ^[0-9]+$ ]]; then
-      if (( lag == 0 )); then lag_color="$GREEN"      # ✅ No lag
-      elif (( lag < 5000 )); then lag_color="$YELLOW" # ⚠️ Moderate lag
-      else lag_color="$RED"                            # 🔥 High lag
-      fi
+    if (( lag == 0 )); then
+      color="$GREEN"
+    elif (( lag < 5000 )); then
+      color="$YELLOW"
+    else
+      color="$RED"
     fi
 
-    # 🎯 Output decorated row
-    printf "%-20s %-8s %-12s %-12s ${lag_color}%-8s${RESET}\n" "$topic" "$part" "$cur" "$end" "$lag"
+    printf "%-22s %-6s %-12s %-12s ${color}%-8s${RESET}\n" \
+      "$topic" "$part" "$cur" "$end" "$lag"
   done
 
   hr
-  echo -e "${DIM}🧠 Narration Tip:${RESET} LAG = LOG_END - CURRENT | High lag 🔥 could mean ISR shrink or consumer delay"
+  echo -e "${DIM}🧠 Teaching:${RESET} Flat CURRENT + rising LAG = recovery required"
 }
 
 hide_cursor

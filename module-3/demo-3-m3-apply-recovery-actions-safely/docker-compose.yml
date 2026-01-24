@@ -16,21 +16,25 @@ services:
     depends_on: [zookeeper]
     ports:
       - "19092:9092"
-      - "19999:9999"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker1:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # 3-broker safe defaults (IMPORTANT: keep consistent across brokers)
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_NUM_PARTITIONS: 3
-      KAFKA_JMX_HOSTNAME: broker1
-      KAFKA_JMX_PORT: 9999
-      JMX_PORT: 9999
+
+      # recommended for 3-broker demos (prevents txn warnings)
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
     networks: [ps-kafka-m2-demo2-net]
     restart: unless-stopped
 
@@ -40,21 +44,23 @@ services:
     depends_on: [zookeeper]
     ports:
       - "29092:9092"
-      - "29999:9999"
     environment:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker2:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_NUM_PARTITIONS: 3
-      KAFKA_JMX_HOSTNAME: broker2
-      KAFKA_JMX_PORT: 9999
-      JMX_PORT: 9999
+
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+
     networks: [ps-kafka-m2-demo2-net]
     restart: unless-stopped
 
@@ -64,57 +70,23 @@ services:
     depends_on: [zookeeper]
     ports:
       - "39092:9092"
-      - "39999:9999"
     environment:
       KAFKA_BROKER_ID: 3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker3:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_NUM_PARTITIONS: 3
-      KAFKA_JMX_HOSTNAME: broker3
-      KAFKA_JMX_PORT: 9999
-      JMX_PORT: 9999
-    networks: [ps-kafka-m2-demo2-net]
-    restart: unless-stopped
 
-  jmx-exporter-broker1:
-    image: bitnami/jmx-exporter:latest
-    container_name: jmx-exporter-broker1
-    command: ["5556", "/etc/jmx-exporter/kafka-broker.yml"]
-    volumes:
-      - ./jmx-exporter/kafka-broker-broker1.yml:/etc/jmx-exporter/kafka-broker.yml:ro
-    ports:
-      - "5556:5556"
-    depends_on: [broker1]
-    networks: [ps-kafka-m2-demo2-net]
-    restart: unless-stopped
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
 
-  jmx-exporter-broker2:
-    image: bitnami/jmx-exporter:latest
-    container_name: jmx-exporter-broker2
-    command: ["5556", "/etc/jmx-exporter/kafka-broker.yml"]
-    volumes:
-      - ./jmx-exporter/kafka-broker-broker2.yml:/etc/jmx-exporter/kafka-broker.yml:ro
-    ports:
-      - "5557:5556"
-    depends_on: [broker2]
-    networks: [ps-kafka-m2-demo2-net]
-    restart: unless-stopped
-
-  jmx-exporter-broker3:
-    image: bitnami/jmx-exporter:latest
-    container_name: jmx-exporter-broker3
-    command: ["5556", "/etc/jmx-exporter/kafka-broker.yml"]
-    volumes:
-      - ./jmx-exporter/kafka-broker-broker3.yml:/etc/jmx-exporter/kafka-broker.yml:ro
-    ports:
-      - "5558:5556"
-    depends_on: [broker3]
     networks: [ps-kafka-m2-demo2-net]
     restart: unless-stopped
 
@@ -140,11 +112,7 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
-    depends_on:
-      - jmx-exporter-broker1
-      - jmx-exporter-broker2
-      - jmx-exporter-broker3
-      - kafka-exporter
+    depends_on: [broker1, broker2, broker3, kafka-exporter]
     networks: [ps-kafka-m2-demo2-net]
     restart: unless-stopped
 
@@ -166,4 +134,5 @@ services:
 
 networks:
   ps-kafka-m2-demo2-net:
+    external: true
     name: ps-kafka-m2-demo2-net

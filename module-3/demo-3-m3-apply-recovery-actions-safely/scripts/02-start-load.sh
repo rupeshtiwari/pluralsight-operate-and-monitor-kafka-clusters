@@ -2,83 +2,87 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
 source "$DIR/00-env.sh"
 
-# ✅ Goal: a clean, repeatable producer load for recording.
-# - No env vars needed to run.
-# - Keeps the terminal readable (only prints perf summary lines).
-# - Waits for Kafka to be reachable before starting.
+BROKER_CONTAINER="${BROKER_CONTAINER:-broker1}"
+BOOTSTRAP="${BOOTSTRAP_SERVERS:-broker1:9092}"
 
-# Defaults (override only if you really want to)
-DURATION_SEC="${DURATION_SEC:-240}"   # ~4 minutes (good for a 2–3 min recording)
-TARGET_RPS="${TARGET_RPS:-25000}"     # msgs/sec target
-RECORD_SIZE="${RECORD_SIZE:-200}"     # bytes per record
-WINDOW_SEC="${WINDOW_SEC:-5}"         # seconds per perf batch
+WINDOW_SEC="${WINDOW_SEC:-5}"
+WINDOWS="${WINDOWS:-30}"
+THROUGHPUT="${THROUGHPUT:-25000}"
+RECORD_SIZE="${RECORD_SIZE:-200}"
 
 WARN_LOG="/tmp/ops-demo-producer.warn"
 
-hr() { printf '%s\n' "────────────────────────────────────────────────────────────────────────────────"; }
+# NEW: local stop flag (host side). Recovery will create this.
+STOP_FILE="${STOP_FILE:-/tmp/ops-demo-stop-load}"
+# If a previous recovery left the stop file behind, remove it so load can start.
+rm -f "$STOP_FILE" >/dev/null 2>&1 || true
 
-wait_for_kafka() {
-  # We run inside the broker container so we can use broker DNS.
-  local tries=40
-  while (( tries-- > 0 )); do
-    if docker exec "$BROKER_CONTAINER" bash -lc "kafka-broker-api-versions --bootstrap-server '$BOOTSTRAP' >/dev/null 2>&1"; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
 
-echo "Start producer load (clean output)"
+RED=$'\033[31m'; GREEN=$'\033[32m'; CYAN=$'\033[36m'; BOLD=$'\033[1m'; RESET=$'\033[0m'; DIM=$'\033[2m'; YELLOW=$'\033[33m'
+hr(){ printf '%s\n' "--------------------------------------------------------------------------------"; }
+die(){ echo -e "${RED}[ERR]${RESET} $*" >&2; exit 1; }
+
+records_per_window=$((THROUGHPUT * WINDOW_SEC))
+
+echo -e "${CYAN}${BOLD}🚀 Start Producer Load${RESET}"
 hr
-echo "Topic:     $TOPIC"
-echo "Bootstrap: $BOOTSTRAP"
-echo "Target:    ~${TARGET_RPS} msg/s"
-echo "Duration:  ~${DURATION_SEC}s"
-echo "(Warnings suppressed to: $WARN_LOG)"
-echo
+printf "📌 Topic:      %s\n" "$TOPIC"
+printf "🛰️ Bootstrap:  %s\n" "$BOOTSTRAP"
+printf "🎯 Target:     ~%s msg/s\n" "$THROUGHPUT"
+printf "⏱️  Duration:   ~%ss (%s windows of %ss)\n" "$((WINDOW_SEC*WINDOWS))" "$WINDOWS" "$WINDOW_SEC"
+printf "🪵 Warn log:   %s (inside %s)\n" "$WARN_LOG" "$BROKER_CONTAINER"
+printf "🛑 Stop file:  %s (host). Create it to stop safely.\n" "$STOP_FILE"
+hr
 
-if ! wait_for_kafka; then
-  echo "[ERR] Kafka not reachable via $BOOTSTRAP"
-  echo "Tip: run ./run-demo.sh again and wait for brokers to be healthy"
-  exit 1
-fi
+docker exec "$BROKER_CONTAINER" bash -lc "kafka-broker-api-versions --bootstrap-server '$BOOTSTRAP' >/dev/null 2>&1" \
+  || die "Kafka is not reachable on $BOOTSTRAP"
 
-TOTAL_WINDOWS=$(( DURATION_SEC / WINDOW_SEC ))
-(( TOTAL_WINDOWS < 1 )) && TOTAL_WINDOWS=1
+docker exec "$BROKER_CONTAINER" bash -lc "kafka-topics --bootstrap-server '$BOOTSTRAP' --topic '$TOPIC' --describe >/dev/null 2>&1" \
+  || die "Topic '$TOPIC' not found. Run: ./scripts/01-create-topic.sh"
 
-RECORDS_PER_WINDOW=$(( TARGET_RPS * WINDOW_SEC ))
+docker exec "$BROKER_CONTAINER" bash -lc ": > '$WARN_LOG'"
 
-for _ in $(seq 1 "$TOTAL_WINDOWS"); do
-  # Capture output, but only print the summary lines you want on camera.
+for w in $(seq 1 "$WINDOWS"); do
+  # NEW: stop requested?
+  if [[ -f "$STOP_FILE" ]]; then
+    rm -f "$STOP_FILE" || true
+    echo -e "${YELLOW}🛑 Stop requested. Ending load cleanly.${RESET}"
+    echo -e "${GREEN}✅ Load stopped.${RESET}"
+    exit 0
+  fi
+
+  ts="$(date +%H:%M:%S)"
+  echo -e "${DIM}📦 Window ${w}/${WINDOWS}  start=${ts}${RESET}"
+
   out="$(
     docker exec "$BROKER_CONTAINER" bash -lc "
       kafka-producer-perf-test \
         --topic '$TOPIC' \
-        --num-records $RECORDS_PER_WINDOW \
-        --record-size $RECORD_SIZE \
-        --throughput $TARGET_RPS \
-        --producer-props bootstrap.servers='$BOOTSTRAP' acks=1 linger.ms=10 batch.size=32768 \
-        2>>'$WARN_LOG'
+        --num-records '$records_per_window' \
+        --record-size '$RECORD_SIZE' \
+        --throughput '$THROUGHPUT' \
+        --producer-props bootstrap.servers='$BOOTSTRAP' acks=all linger.ms=0 batch.size=0 \
+        2>>'$WARN_LOG' | tail -n 1
     " || true
   )"
 
-  # Print only the perf-test summary line(s):
-  # "100000 records sent, 20000.0 records/sec ..."
-  line="$(printf '%s\n' "$out" | grep -E '^[0-9]+ records sent,' | tail -n 1 || true)"
+  # If the perf test got killed because we requested stop, exit cleanly.
+  if [[ -z "${out// /}" ]]; then
+    if [[ -f "$STOP_FILE" ]]; then
+      rm -f "$STOP_FILE" || true
+      echo -e "${YELLOW}🛑 Load interrupted (stop requested).${RESET}"
+      echo -e "${GREEN}✅ Load stopped.${RESET}"
+      exit 0
+    fi
 
-  if [[ -n "$line" ]]; then
-    echo "$line"
-  else
-    # If Kafka was restarting, perf-test may not emit a summary. Keep it one clean line.
-    echo "(producer batch skipped: broker churn / metadata refresh)"
+    echo -e "${RED}[producer] ✗ window failed. Check:${RESET}"
+    echo "docker exec $BROKER_CONTAINER tail -n 30 $WARN_LOG"
+    exit 1
   fi
 
-  sleep 1
+  echo "$out"
 done
 
-echo
-echo "[OK] Load finished (Ctrl+C anytime)."
+echo -e "${GREEN}✅ Load complete.${RESET}"

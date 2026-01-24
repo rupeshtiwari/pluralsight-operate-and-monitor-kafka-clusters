@@ -1,33 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# High-signal broker2 log view for correlation with Grafana timestamps.
-# Keep this running BEFORE you trigger the incident (broker2 restart).
+PATTERN="${PATTERN:-ERROR|WARN|FATAL|Shutdown|Starting|started|KafkaServer|Controller|Becoming|Resign|Leader|ISR|UnderReplicated|Offline|ReplicaFetcher|Caught up|Epoch|Rebalance|GroupCoordinator|timeout}"
 
-FILTER_RE='Resigned|Controlled shutdown request|Registered broker|Starting|Started|kafka\.controller|LeaderAndIsr|become-(leader|follower)|ERROR|WARN'
+BOLD=$'\033[1m'; RESET=$'\033[0m'; CYAN=$'\033[36m'; DIM=$'\033[2m'
+hr(){ printf '%s\n' "--------------------------------------------------------------------------------"; }
 
-printf "\nBroker2 high-signal events (Ctrl+C to stop)\n"
-printf "Filter: %s\n\n" "$FILTER_RE"
-printf "%-23s %-5s %s\n" "TIME" "LVL" "EVENT"
-printf "%-23s %-5s %s\n" "-----------------------" "-----" "-----------------------------------------------"
+echo -e "${CYAN}${BOLD}📌 Watching broker2 logs (high-signal only). Ctrl+C to stop.${RESET}"
+echo -e "${DIM}Pattern:${RESET} (${PATTERN})"
+hr
 
-docker logs -f broker2 2>&1 \
-  | egrep -i "$FILTER_RE" \
-  | awk '
-      {
-        # Typical format:
-        # [2026-01-20 08:15:51,751] WARN [Producer clientId=...] Received invalid metadata...
-        ts=""; lvl=""; msg=$0;
-        if (match($0, /^\[[0-9\-: ,]+\]/)) {
-          ts=substr($0, RSTART+1, RLENGTH-2);
-        }
-        if (match($0, /(INFO|WARN|ERROR)/)) {
-          lvl=substr($0, RSTART, RLENGTH);
-        }
-        gsub(/\s+/, " ", msg);
-        # Trim long noise
-        if (length(msg) > 140) msg=substr(msg,1,140)"...";
-        printf "%-23s %-5s %s\n", ts, lvl, msg;
-        fflush();
-      }
-    '
+docker logs -f broker2 2>&1 | grep --line-buffered --color=always -E "$PATTERN"
